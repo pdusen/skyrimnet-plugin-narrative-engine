@@ -24,26 +24,34 @@
 # Each invocation pays the dev-shell load cost (~1-2 s) and the configure
 # step's cmake/vcpkg cost on first run; subsequent builds reuse the cache.
 #
-# `build` / `rebuild` also prune orphaned Papyrus output. CMake's
-# compile_papyrus target invokes PapyrusCompiler.exe with `-all`, which only
-# ever *writes* .pex files into <mod-folder>/Scripts/ — it never removes the
-# output of a .psc that has since been deleted. Since package.ps1 zips the
-# deployed mod folder wholesale, an orphaned .pex would ship in the release
-# and, worse, could override a same-named vanilla or third-party script. So
-# after a successful build we delete any .pex in the deployed Scripts folder
-# with no matching .psc under esp/Source/Scripts/ (basename match — the
-# compiler names output after the Scriptname declaration, which matches the
-# filename for every script in this project).
+# `build` / `rebuild` deploy through a staging folder, build/<preset>/staging/,
+# laid out exactly as the mod folder is. Every CMake deploy rule (DLL, statics,
+# dashboard bundle, compiled Papyrus) writes there and nowhere else. Each build:
 #
-# They prune orphaned statics the same way, for the same packaging reason.
-# CMake mirrors statics/ into the mod folder file by file and never deletes,
-# so switching to a branch whose statics/ lacks a file leaves the previous
-# branch's copy deployed. Unlike Scripts/, the mod folder can't be diffed
-# against statics/ directly — SKSE/Plugins/ also holds the DLL and anything
-# SkyrimNet writes at runtime — so each build records the statics it
-# deployed in build/deployed-statics.txt (outside build/<preset>, so `clean`
-# keeps it) and the next build deletes only recorded files that statics/ no
-# longer has.
+#   1. empties the staging folder, so it can only ever hold what this build
+#      produced;
+#   2. runs the CMake build, which fills it;
+#   3. adds NarrativeEngine.esp, copied from the mod folder -- the one file
+#      that is an input as well as an output. It is the Creation Kit's working
+#      copy, and the build's sync_esp step has just reconciled it with
+#      esp/plugin/;
+#   4. copies the staging folder into the mod folder, skipping files that
+#      are already identical there;
+#   5. deletes from the mod folder whatever the previous build of this
+#      checkout deployed and this one no longer stages, then records what it
+#      staged in build/deployed-files.txt (outside build/<preset>, so `clean`
+#      keeps it). The record is what makes the delete safe: the mod folder
+#      also holds files this checkout never deployed -- another worktree's,
+#      or whatever SkyrimNet writes there at runtime -- and those are left
+#      alone.
+#
+# package.ps1 zips the staging folder, not the mod folder. The mod folder is
+# shared by every worktree on the machine, and zipping it once shipped another
+# worktree's dashboard bundle and language files in a release (v0.9.1).
+#
+# A build run straight from CMake (VS Code's CMake Tools, a bare
+# `cmake --build`) skips steps 1 and 3-5: it refreshes the staging folder but
+# deploys nothing to the game.
 
 [CmdletBinding()]
 param(
@@ -95,6 +103,7 @@ if (Test-Path $presetFile) {
 }
 
 $buildDir = Join-Path $PSScriptRoot "build/$Preset"
+$stagingDir = Join-Path $buildDir 'staging'
 
 # --- 3. Dispatch -------------------------------------------------------------
 
@@ -109,88 +118,96 @@ function Invoke-Build {
         Write-Host "==> build dir not configured; running configure first" -ForegroundColor Yellow
         Invoke-Configure
     }
+    Clear-Staging
     Write-Host "==> cmake --build $buildDir" -ForegroundColor Cyan
     cmake --build $buildDir
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)." }
-    Invoke-PapyrusPrune
-    Invoke-StaticsPrune
+    Publish-Staging
 }
 
-# Delete .pex files in the deployed mod folder that no longer have a
-# corresponding .psc source. See the header comment for why this is needed.
-function Invoke-PapyrusPrune {
-    $modsRoot = $env:SKYRIM_MODS_FOLDER
-    if (-not $modsRoot) { return }
+# Empty the staging folder, so the build that follows starts from nothing.
+# Ninja sees every staged file missing and re-runs each deploy rule.
+function Clear-Staging {
+    if (Test-Path -LiteralPath $stagingDir) {
+        Remove-Item -LiteralPath $stagingDir -Recurse -Force
+    }
+}
 
-    $deployedScripts = Join-Path $modsRoot 'NarrativeEngine/Scripts'
-    if (-not (Test-Path -LiteralPath $deployedScripts -PathType Container)) { return }
+# True when both files exist with identical contents.
+function Test-SameFile([string]$a, [string]$b) {
+    if (-not (Test-Path -LiteralPath $b -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $a).Length -ne (Get-Item -LiteralPath $b).Length) { return $false }
+    return (Get-FileHash -LiteralPath $a -Algorithm SHA256).Hash -eq
+    (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash
+}
 
-    $sourceScripts = Join-Path $PSScriptRoot 'esp/Source/Scripts'
-    $sourceNames = @(
-        Get-ChildItem -LiteralPath $sourceScripts -Filter '*.psc' -File -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.BaseName }
-    )
+# Stage the ESP, copy the staging folder into the mod folder, and delete what
+# the previous build deployed that this one no longer stages. See the header.
+function Publish-Staging {
+    # Written by CMake only when it has somewhere to deploy to.
+    $deployTargetFile = Join-Path $buildDir 'deploy-target.txt'
+    if (-not (Test-Path -LiteralPath $deployTargetFile -PathType Leaf)) { return }
+    $modFolder = [System.IO.Path]::GetFullPath((Get-Content -LiteralPath $deployTargetFile -Raw).Trim())
 
-    # Refuse to prune against an empty source list. If esp/Source/Scripts/ is
-    # missing or misresolved, every deployed .pex would look orphaned and we'd
-    # wipe the whole Scripts folder. A project with genuinely zero .psc files
-    # has nothing to deploy anyway, so skipping costs nothing.
-    if ($sourceNames.Count -eq 0) {
-        Write-Warning "Papyrus prune: no .psc sources found under $sourceScripts; skipping prune."
+    if (-not (Test-Path -LiteralPath $stagingDir -PathType Container)) {
+        Write-Warning "Staging folder $stagingDir was not created; nothing deployed."
         return
     }
 
-    $orphans = @(
-        Get-ChildItem -LiteralPath $deployedScripts -Filter '*.pex' -File -ErrorAction SilentlyContinue |
-            Where-Object { $sourceNames -notcontains $_.BaseName }
-    )
-    if ($orphans.Count -eq 0) { return }
-
-    Write-Host "==> pruning $($orphans.Count) orphaned .pex from $deployedScripts" -ForegroundColor Cyan
-    foreach ($orphan in $orphans) {
-        Write-Host "    removed $($orphan.Name)" -ForegroundColor DarkGray
-        Remove-Item -LiteralPath $orphan.FullName -Force
+    $modEsp = Join-Path $modFolder 'NarrativeEngine.esp'
+    if (Test-Path -LiteralPath $modEsp -PathType Leaf) {
+        Copy-Item -LiteralPath $modEsp -Destination (Join-Path $stagingDir 'NarrativeEngine.esp') -Force
     }
-}
-
-# Delete files an earlier build deployed from statics/ that statics/ no longer
-# contains, then record what this build deployed. See the header comment.
-function Invoke-StaticsPrune {
-    $modsRoot = $env:SKYRIM_MODS_FOLDER
-    if (-not $modsRoot) { return }
-
-    $modFolder = [System.IO.Path]::GetFullPath((Join-Path $modsRoot 'NarrativeEngine'))
-    if (-not (Test-Path -LiteralPath $modFolder -PathType Container)) { return }
 
     # Case-insensitive, like the filesystem: a case-only rename must not read
     # as "old name gone", or we'd delete the file this build just deployed.
-    $staticsRoot = Join-Path $PSScriptRoot 'statics'
-    $deployed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    Get-ChildItem -LiteralPath $staticsRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
+    $staged = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    Get-ChildItem -LiteralPath $stagingDir -Recurse -File -Force |
         ForEach-Object {
-            [void]$deployed.Add([System.IO.Path]::GetRelativePath($staticsRoot, $_.FullName).Replace('\', '/'))
+            [void]$staged.Add([System.IO.Path]::GetRelativePath($stagingDir, $_.FullName).Replace('\', '/'))
         }
 
-    # Same guard as the Papyrus prune: a missing statics/ would make every
-    # recorded file look orphaned.
-    if ($deployed.Count -eq 0) {
-        Write-Warning "Statics prune: no files found under $staticsRoot; skipping prune."
+    # An empty staging folder would make every recorded file look orphaned.
+    if ($staged.Count -eq 0) {
+        Write-Warning "Staging folder $stagingDir is empty; nothing deployed."
         return
     }
 
-    $recordPath = Join-Path $PSScriptRoot 'build/deployed-statics.txt'
-    $orphans = @()
+    $copied = 0
+    foreach ($rel in $staged) {
+        $src = Join-Path $stagingDir $rel
+        $dst = Join-Path $modFolder $rel
+        if (Test-SameFile $src $dst) { continue }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+        $copied++
+    }
+    Write-Host "==> deployed $stagingDir -> $modFolder ($copied of $($staged.Count) file(s) changed)" -ForegroundColor Cyan
+
+    # The record from before staging existed listed statics only; it seeds the
+    # first run so files removed since then are still swept.
+    $recordPath = Join-Path $PSScriptRoot 'build/deployed-files.txt'
+    $legacyRecordPath = Join-Path $PSScriptRoot 'build/deployed-statics.txt'
+    $previousRecord = $null
     if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+        $previousRecord = $recordPath
+    }
+    elseif (Test-Path -LiteralPath $legacyRecordPath -PathType Leaf) {
+        $previousRecord = $legacyRecordPath
+    }
+
+    $orphans = @()
+    if ($previousRecord) {
         $orphans = @(
-            Get-Content -LiteralPath $recordPath |
-                Where-Object { $_ -and -not $deployed.Contains($_) } |
+            Get-Content -LiteralPath $previousRecord |
+                Where-Object { $_ -and -not $staged.Contains($_) } |
                 ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $modFolder $_)) } |
                 Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
         )
     }
 
     if ($orphans.Count -gt 0) {
-        Write-Host "==> pruning $($orphans.Count) orphaned statics from $modFolder" -ForegroundColor Cyan
+        Write-Host "==> pruning $($orphans.Count) file(s) this checkout no longer deploys from $modFolder" -ForegroundColor Cyan
         foreach ($orphan in $orphans) {
             Write-Host "    removed $([System.IO.Path]::GetRelativePath($modFolder, $orphan))" -ForegroundColor DarkGray
             Remove-Item -LiteralPath $orphan -Force
@@ -205,7 +222,10 @@ function Invoke-StaticsPrune {
         }
     }
 
-    Set-Content -LiteralPath $recordPath -Value ($deployed | Sort-Object)
+    Set-Content -LiteralPath $recordPath -Value ($staged | Sort-Object)
+    if (Test-Path -LiteralPath $legacyRecordPath -PathType Leaf) {
+        Remove-Item -LiteralPath $legacyRecordPath -Force
+    }
 }
 
 # Build and run the Catch2 unit tests.

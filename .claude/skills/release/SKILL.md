@@ -316,8 +316,8 @@ affirmative ("do it", "authorized", "go ahead"). Re-present the
 
 Three files carry the mod's advertised version and must be updated to match the
 accepted `$Version` before the packaged artifact is built (`package.ps1` runs
-`build.ps1` which syncs these into the mod folder — the archive will bake in
-whatever version is on disk at packaging time):
+`build.ps1`, which stages these with the rest of the build — the archive will
+bake in whatever version is on disk at packaging time):
 
 - `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`
   — update the `version: "..."` key in the top-level `plugin:` block.

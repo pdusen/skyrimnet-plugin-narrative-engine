@@ -326,45 +326,73 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${PRISMA_UI_INCLUDE}")
 # soft-link `PrismaUI.dll` at runtime via `GetModuleHandle` + the upstream
 # `RequestPluginAPI()` helper, degrading gracefully when PrismaUI is absent.
 
-# When your SKSE .dll is compiled, this will automatically copy the .dll into your mods folder.
-# Only works if you configure DEPLOY_ROOT above (or set the SKYRIM_MODS_FOLDER environment variable)
+# Deployment. Only active when OUTPUT_FOLDER resolved above (normally via the
+# SKYRIM_MODS_FOLDER environment variable). The deploy-target file is removed
+# first so a configure that loses OUTPUT_FOLDER can't leave an earlier one
+# telling build.ps1 to copy into it.
+file(REMOVE "${CMAKE_BINARY_DIR}/deploy-target.txt")
 if(DEFINED OUTPUT_FOLDER)
-    # If you specify an <OUTPUT_FOLDER> (including via environment variables)
-    # then we'll copy your mod files into Skyrim or a mod manager for you!
+    # Every deploy rule below writes into STAGING_FOLDER, a folder inside this
+    # build tree laid out exactly as the mod folder is -- never into
+    # OUTPUT_FOLDER itself. build.ps1 empties it before each build, copies it
+    # into OUTPUT_FOLDER afterwards, and package.ps1 zips it.
+    #
+    # The mod folder is shared by every worktree on the machine, so whatever
+    # another checkout last deployed is sitting in it. Zipping it shipped one
+    # worktree's dashboard bundle and language files inside another's release
+    # (v0.9.1). A staging folder that starts empty can only hold what this
+    # build produced.
+    #
+    # deploy-target.txt tells build.ps1 where the staging folder is copied to,
+    # so the destination is resolved in one place (here) rather than twice.
+    set(STAGING_FOLDER "${CMAKE_BINARY_DIR}/staging")
+    file(WRITE "${CMAKE_BINARY_DIR}/deploy-target.txt" "${OUTPUT_FOLDER}")
+    message(
+        STATUS
+        "Staging folder: ${STAGING_FOLDER} (copied to ${OUTPUT_FOLDER} by build.ps1)"
+    )
 
-    # Copy the SKSE plugin .dll files into the SKSE/Plugins/ folder
-    set(DLL_FOLDER "${OUTPUT_FOLDER}/SKSE/Plugins")
-
-    message(STATUS "SKSE plugin output folder: ${DLL_FOLDER}")
-
+    # Stage the SKSE plugin .dll into SKSE/Plugins/. An OUTPUT rule rather than
+    # a POST_BUILD step: POST_BUILD runs only when the DLL relinks, so an
+    # emptied staging folder would be left without it on every build that
+    # touched no C++. The staged names are spelled out because OUTPUT may not
+    # use target-dependent generator expressions; nothing sets OUTPUT_NAME on
+    # the plugin, so the target name is the file name.
+    set(DLL_FOLDER "${STAGING_FOLDER}/SKSE/Plugins")
+    set(PLUGIN_DEPLOY_OUTPUTS "${DLL_FOLDER}/${PROJECT_NAME}.dll")
     add_custom_command(
-        TARGET "${PROJECT_NAME}"
-        POST_BUILD
+        OUTPUT "${DLL_FOLDER}/${PROJECT_NAME}.dll"
+        DEPENDS "${PROJECT_NAME}" "$<TARGET_FILE:${PROJECT_NAME}>"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${DLL_FOLDER}"
         COMMAND
             "${CMAKE_COMMAND}" -E copy_if_different
-            "$<TARGET_FILE:${PROJECT_NAME}>"
-            "${DLL_FOLDER}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+            "$<TARGET_FILE:${PROJECT_NAME}>" "${DLL_FOLDER}/${PROJECT_NAME}.dll"
         VERBATIM
     )
 
-    # If you perform a "Debug" build, also copy .pdb file (for debug symbols)
+    # If you perform a "Debug" build, also stage the .pdb file (for debug symbols)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_custom_command(
-            TARGET "${PROJECT_NAME}"
-            POST_BUILD
+            OUTPUT "${DLL_FOLDER}/${PROJECT_NAME}.pdb"
+            DEPENDS "${PROJECT_NAME}" "$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${DLL_FOLDER}"
             COMMAND
                 "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_PDB_FILE:${PROJECT_NAME}>"
-                "${DLL_FOLDER}/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
+                "${DLL_FOLDER}/${PROJECT_NAME}.pdb"
             VERBATIM
         )
+        list(APPEND PLUGIN_DEPLOY_OUTPUTS "${DLL_FOLDER}/${PROJECT_NAME}.pdb")
     endif()
 
-    # Deploy everything under statics/ verbatim into the mod folder,
-    # preserving directory structure. The repo-side layout mirrors the mod
-    # folder layout exactly — so e.g. `statics/SKSE/Plugins/NarrativeEngine.ini`
-    # lands at `<OUTPUT_FOLDER>/SKSE/Plugins/NarrativeEngine.ini`.
+    add_custom_target(deploy_plugin ALL DEPENDS ${PLUGIN_DEPLOY_OUTPUTS})
+    message(STATUS "SKSE plugin staging folder: ${DLL_FOLDER}")
+
+    # Stage everything under statics/ verbatim, preserving directory
+    # structure. The repo-side layout mirrors the mod folder layout exactly —
+    # so e.g. `statics/SKSE/Plugins/NarrativeEngine.ini` lands at
+    # `<STAGING_FOLDER>/SKSE/Plugins/NarrativeEngine.ini`, and from there at
+    # the same path under the mod folder.
     #
     # We enumerate at configure time via GLOB_RECURSE (CONFIGURE_DEPENDS makes
     # the glob re-run at build time and re-trigger configure if the file list
@@ -378,8 +406,8 @@ if(DEFINED OUTPUT_FOLDER)
     #     pattern only fired when the DLL actually re-linked, so prompt-only
     #     edits would silently skip the deploy.
     #   * Adding/removing a file is picked up by CONFIGURE_DEPENDS on the next
-    #     build. Removed files leave their previous deploy behind in the mod
-    #     folder; `build.ps1 build` sweeps those afterwards (see its header).
+    #     build. A removed file is simply never staged again, and `build.ps1
+    #     build` deletes its earlier copy from the mod folder (see its header).
     #
     # `make_directory` is idempotent, so multiple files in the same destination
     # subdir cause no issues. `copy_if_different` skips no-op writes.
@@ -430,12 +458,12 @@ if(DEFINED OUTPUT_FOLDER)
         if(STATICS_FILES)
             message(
                 STATUS
-                "Statics deploy: ${STATICS_SOURCE_DIR} -> ${OUTPUT_FOLDER}"
+                "Statics deploy: ${STATICS_SOURCE_DIR} -> ${STAGING_FOLDER}"
             )
             set(STATICS_DEPLOY_OUTPUTS "")
             foreach(rel IN LISTS STATICS_FILES)
                 set(src "${STATICS_SOURCE_DIR}/${rel}")
-                set(dst "${OUTPUT_FOLDER}/${rel}")
+                set(dst "${STAGING_FOLDER}/${rel}")
                 get_filename_component(dst_dir "${dst}" DIRECTORY)
                 add_custom_command(
                     OUTPUT "${dst}"
@@ -462,8 +490,8 @@ if(DEFINED OUTPUT_FOLDER)
     #
     # The dashboard JS bundle is part of the unified build. Editing any
     # `dashboard/` source triggers a Rollup re-bundle on the next
-    # `pwsh -File build.ps1 build` and the dist outputs deploy into the mod
-    # folder's PrismaUI views path alongside the DLL and statics. CMake
+    # `pwsh -File build.ps1 build` and the dist outputs are staged at the
+    # PrismaUI views path alongside the DLL and statics. CMake
     # doesn't run Rollup itself — it shells out to npm — but tracks the
     # input/output graph so Ninja skips unchanged work in both directions
     # (touch only .tsx → only the bundle rebuilds; touch only .cpp → only
@@ -479,7 +507,7 @@ if(DEFINED OUTPUT_FOLDER)
         "${DASHBOARD_DIR}/node_modules/.cmake-install-stamp"
     )
     set(DASHBOARD_DEPLOY_DIR
-        "${OUTPUT_FOLDER}/PrismaUI/views/NarrativeEngine/dashboard"
+        "${STAGING_FOLDER}/PrismaUI/views/NarrativeEngine/dashboard"
     )
 
     # 1. `npm install` — gated on package*.json so the slow install only
@@ -602,7 +630,7 @@ if(DEFINED OUTPUT_FOLDER)
     endif()
 
     # -------------------------------------------------------------------
-    # Papyrus compile (esp/Source/Scripts/*.psc -> <mod-folder>/Scripts/*.pex)
+    # Papyrus compile (esp/Source/Scripts/*.psc -> <staging>/Scripts/*.pex)
     # -------------------------------------------------------------------
     #
     # Conditional on .psc files existing. Until the user authors the first
@@ -670,7 +698,11 @@ if(DEFINED OUTPUT_FOLDER)
         # .ppj is gitignored; VS Code's Papyrus extension picks it up from
         # the repo root automatically.
         set(NE_PAPYRUS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/esp/Source/Scripts")
+        # The .ppj keeps the mod folder as its output, so compiling from the
+        # VS Code extension still goes straight into the game. The build
+        # compiles into the staging folder like everything else it deploys.
         set(NE_PAPYRUS_OUTPUT_DIR "${OUTPUT_FOLDER}/Scripts")
+        set(NE_PAPYRUS_STAGING_DIR "${STAGING_FOLDER}/Scripts")
         # SkyrimNet Papyrus API (SkyrimNetApi.psc etc.) is exposed via a
         # junction created by setup-mod-folder.ps1 that points at the
         # SkyrimNet mod folder's Source/Scripts directory.
@@ -695,12 +727,15 @@ if(DEFINED OUTPUT_FOLDER)
         # stock compiler treats any non-script argument as a script name and
         # bails with "unable to locate script"). Invoke it via its native
         # CLI: <folder> -all -f=<flags> -i=<imports> -o=<output>, derived from
-        # the same variables that get baked into the .ppj for IDE use.
+        # the same variables that get baked into the .ppj for IDE use (all
+        # but the output folder; see NE_PAPYRUS_STAGING_DIR above).
         # Imports list the project's own source folder first so cross-script
         # references resolve before any vanilla / SKSE fallbacks.
         add_custom_target(
             compile_papyrus
             ALL
+            COMMAND
+                "${CMAKE_COMMAND}" -E make_directory "${NE_PAPYRUS_STAGING_DIR}"
             COMMAND
                 "${NE_PAPYRUS_COMPILER}" "${NE_PAPYRUS_SOURCE_DIR}" -all
                 "-f=TESV_Papyrus_Flags.flg"
@@ -708,15 +743,15 @@ if(DEFINED OUTPUT_FOLDER)
                 # adds SendModEvent); they must come BEFORE the vanilla
                 # import so the compiler resolves the augmented versions.
                 "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIMNET};${NE_PAPYRUS_IMPORT_MCM};${NE_PAPYRUS_IMPORT_SKSE};${NE_PAPYRUS_IMPORT_SKYRIM}"
-                "-o=${NE_PAPYRUS_OUTPUT_DIR}" -op
+                "-o=${NE_PAPYRUS_STAGING_DIR}" -op
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             DEPENDS ${PAPYRUS_SOURCES}
-            COMMENT "Compiling Papyrus scripts to ${NE_PAPYRUS_OUTPUT_DIR}"
+            COMMENT "Compiling Papyrus scripts to ${NE_PAPYRUS_STAGING_DIR}"
             VERBATIM
         )
         message(
             STATUS
-            "Papyrus compile: ${NE_PAPYRUS_SOURCE_DIR} -> ${NE_PAPYRUS_OUTPUT_DIR}"
+            "Papyrus compile: ${NE_PAPYRUS_SOURCE_DIR} -> ${NE_PAPYRUS_STAGING_DIR}"
         )
     else()
         message(STATUS "Papyrus compile: no .psc files yet; step dormant")

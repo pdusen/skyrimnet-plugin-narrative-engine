@@ -125,7 +125,8 @@ environment.
   `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` (see `CMakePresets.json`).
 - `SKYRIM_MODS_FOLDER` — absolute path to your MO2 (or Vortex) `mods/` folder. The build deploys
   the compiled DLL, `statics/` payload, dashboard bundle, and `.pex` files under
-  `$SKYRIM_MODS_FOLDER/NarrativeEngine/`. `setup-mod-folder.ps1` and `sync-esp.ps1` also read it.
+  `$SKYRIM_MODS_FOLDER/NarrativeEngine/`, by way of a staging folder (see
+  [How a build deploys](#how-a-build-deploys)). `setup-mod-folder.ps1` and `sync-esp.ps1` also read it.
 - `PRISMA_UI_INCLUDE` — absolute path to the directory containing `PrismaUI_API.h`. CMake
   `FATAL_ERROR`s if the header isn't found at this path.
 
@@ -220,8 +221,8 @@ pwsh -File build.ps1 build -Preset local-debug   # only when SkyrimNet isn't on 
 After C++ edits, the right workflow is:
 
 1. `pwsh -File build.ps1 build` — verify the build succeeds before considering the change done.
-2. On success, the DLL is auto-deployed by the existing CMake post-build step to
-   `$SKYRIM_MODS_FOLDER/NarrativeEngine/SKSE/Plugins/NarrativeEngine.dll`.
+2. On success, the DLL is deployed to `$SKYRIM_MODS_FOLDER/NarrativeEngine/SKSE/Plugins/NarrativeEngine.dll`
+   along with everything else the build produces.
 
 Notes:
 
@@ -243,6 +244,29 @@ Notes:
 - Release builds still produce `.pdb` files (CMake's release config emits them), so Visual Studio's
   debugger can attach to a release build with mostly-meaningful stack traces. You lose some local-variable
   visibility to optimization, but it's enough for the rare interactive-debug session.
+
+### How a build deploys
+
+Nothing the build produces is written straight into the mod folder. Every CMake deploy rule — the DLL,
+`statics/`, the dashboard bundle, the compiled `.pex` files — writes into `build/<preset>/staging/`, laid out
+exactly as the mod folder is. `build.ps1 build`:
+
+1. empties the staging folder, so it can only ever hold what this build produced;
+2. runs the CMake build, which fills it;
+3. copies the mod folder's `NarrativeEngine.esp` in — the Creation Kit's working copy, which the build's ESP
+   sync has just reconciled with `esp/plugin/`;
+4. copies the staging folder into `$SKYRIM_MODS_FOLDER/NarrativeEngine/`, skipping files already identical
+   there;
+5. deletes from the mod folder whatever this checkout's previous build deployed and this one no longer
+   stages, using the list it keeps in `build/deployed-files.txt`. Files it never deployed — another
+   worktree's, or anything SkyrimNet writes at runtime — are left alone.
+
+`package.ps1` zips the staging folder, never the mod folder. The mod folder is shared by every worktree on
+the machine and holds whatever any of them last deployed; zipping it shipped one worktree's dashboard bundle
+and language files inside another's release (v0.9.1).
+
+A build started from CMake itself (VS Code's CMake Tools, a bare `cmake --build`) refreshes the staging folder
+but deploys nothing to the game. Build through `build.ps1` when you mean to test in-game.
 
 ## Unit tests
 
@@ -404,9 +428,10 @@ section's path finishes; there is no reset hook to write and none is wanted.
 
 ## Using the `statics/` folder
 
-`statics/` is a verbatim deploy tree — its layout mirrors the runtime mod folder, and the CMake post-build step
-copies every file under it into `$SKYRIM_MODS_FOLDER/NarrativeEngine/` preserving relative paths (see
-`CMakeLists.txt` around the `STATICS_SOURCE_DIR` block).
+`statics/` is a verbatim deploy tree — its layout mirrors the runtime mod folder, and the build stages every
+file under it preserving relative paths (see `CMakeLists.txt` around the `STATICS_SOURCE_DIR` block), then
+copies it into `$SKYRIM_MODS_FOLDER/NarrativeEngine/` with the rest of the staging folder (see
+[How a build deploys](#how-a-build-deploys)).
 
 ### When to put a file in `statics/`
 
@@ -546,8 +571,10 @@ Operational notes:
 `.psc` files live in `esp/Source/Scripts/`. CK and VS Code both edit them via the junction (so a CK
 quest-fragment edit lands in the repo immediately). On every build, the CMake `compile_papyrus` target
 invokes `PapyrusCompiler.exe` against the project's generated `NarrativeEngine.ppj`, and the `.pex` output
-deploys directly into `<mod-folder>/Scripts/`. `.pex` files are never tracked in the repo — they're build
-output that lives only in the mod folder.
+is staged under `Scripts/` and deployed to `<mod-folder>/Scripts/` with everything else. `.pex` files are never
+tracked in the repo — they're build output. Compiling from the VS Code Papyrus extension is the one exception
+to staging: the `.ppj` still names `<mod-folder>/Scripts/` as its output, so an editor compile goes straight
+into the game.
 
 The Papyrus compile target is **conditional** on `.psc` files existing under `esp/Source/Scripts/`. Until
 the first `.psc` is authored, the step is dormant — no compiler invocation, no `PAPYRUS_COMPILER` env-var
