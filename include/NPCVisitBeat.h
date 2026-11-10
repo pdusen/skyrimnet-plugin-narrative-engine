@@ -52,9 +52,17 @@
 //             A fast travel rolls the visit back before the opening line,
 //             and after it records the walk-out silently and aborts.
 //   CLEANUP — send the sender home if alive (to the return anchor, or
-//             to the snapshotted position when there is none), dispatch
-//             the Shutdown fragment, wait for the quest to drop to
-//             Stage 0, then return to NOT_RUNNING.
+//             to the snapshotted position when there is none), end the
+//             visit in the quest script and dispatch the Shutdown
+//             fragment, wait for both aliases to empty and the quest to
+//             drop to Stage 0, then return to NOT_RUNNING. A quest that
+//             never comes to rest gets the stale-fill repair after ~10s.
+//
+// Every call that fills or empties the aliases carries the visit's id,
+// and the quest script refuses a fill for a visit it has been told is
+// over. The VM runs separately-queued calls in no promised order, and a
+// fill landing after its visit's shutdown used to leave the actor in the
+// alias of a stopped quest for good.
 namespace NarrativeEngine
 {
     class NPCVisitBeat : public IBeat

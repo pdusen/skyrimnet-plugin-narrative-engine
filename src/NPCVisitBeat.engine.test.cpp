@@ -120,7 +120,7 @@ namespace
     constexpr std::uint32_t kStageRollback = 60;
     constexpr std::uint32_t kStageShutdown = 200;
 
-    constexpr std::uint32_t kRecordVersion = 3;
+    constexpr std::uint32_t kRecordVersion = 4;
 
     FakeSkyrimNetState& FakeLLM()
     {
@@ -2026,12 +2026,45 @@ TEST_CASE("NPCVisitBeat tears the visit down", "[NPCVisitBeat][engine]")
 
     SECTION("when the quest has come to rest")
     {
+        // What Shutdown leaves: stage 0 and both aliases emptied.
         engine.courier.questStage = 0;
+        engine.FillRefAlias(world.quest.aliases.at(0), nullptr);
+        engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
 
         SECTION("should finish and forget the visit")
         {
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
             REQUIRE(VisitState::GetSnapshot().senderFormID == 0);
+        }
+    }
+
+    SECTION("when the quest reads stage 0 but still holds the sender")
+    {
+        // Stage 0 is also what a stopped quest reads after a fill has
+        // landed on it, which is the state the old stage-only test called
+        // finished and walked away from.
+        engine.courier.questStage = 0;
+
+        SECTION("should keep waiting rather than call it done")
+        {
+            REQUIRE_FALSE(Tick(beat, BeatState::CLEANUP).transitionTo.has_value());
+        }
+
+        SECTION("should still tear the visit down, since it started the quest")
+        {
+            Tick(beat, BeatState::CLEANUP);
+            REQUIRE(DispatchedMethod(engine, "EndVisit"));
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+
+        SECTION("should send the repair in once it has waited long enough")
+        {
+            TickResult last;
+            for (int i = 0; i < 60 && !last.transitionTo; ++i) {
+                last = Tick(beat, BeatState::CLEANUP);
+            }
+            REQUIRE(last.transitionTo == BeatState::NOT_RUNNING);
+            REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
         }
     }
 
@@ -2516,6 +2549,66 @@ TEST_CASE("NPCVisitBeat lets go of a fill no visit owns", "[NPCVisitBeat][engine
         SECTION("should still shut the quest down")
         {
             REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat ends each visit in the quest script before stopping it", "[NPCVisitBeat][engine]")
+{
+    // The fills and the teardown are separately-queued Papyrus calls, and
+    // the VM runs them in no promised order. EndVisit is what lets the
+    // script refuse a fill that lands after its visit is over, so it has to
+    // be queued ahead of the stage that stops the quest.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliasesOnDispatch(engine, world);
+
+    SECTION("when a running visit is taken away")
+    {
+        ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        engine.papyrus.dispatches.clear();
+        AbortFromMainThread(beat);
+
+        SECTION("should close the visit before shutting the quest down")
+        {
+            const auto ended = DispatchIndex(engine, "EndVisit");
+            const auto stopped = DispatchIndex(engine, "SetStage");
+            REQUIRE(ended >= 0);
+            REQUIRE(stopped > ended);
+        }
+
+        SECTION("should delete the anchor it placed, whether or not the alias ever held it")
+        {
+            // The arrival marker went when the warp landed; the anchor is
+            // the only other reference the beat placed.
+            REQUIRE(SurvivingPlacedRefs(engine) == 0);
+        }
+    }
+
+    SECTION("when a visit is taken away before it has started the quest")
+    {
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+        AbortFromMainThread(beat);
+
+        SECTION("should still close the visit")
+        {
+            REQUIRE(DispatchedMethod(engine, "EndVisit"));
+        }
+
+        SECTION("should not set a stage on a quest it never started")
+        {
+            REQUIRE(engine.questControl.started.empty());
+            REQUIRE_FALSE(DispatchedMethod(engine, "SetStage"));
         }
     }
 }

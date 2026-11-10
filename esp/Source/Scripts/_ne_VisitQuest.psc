@@ -1,17 +1,42 @@
 Scriptname _ne_VisitQuest extends Quest
 
 ; Sender alias — Optional with no fill rule, force-filled from C++ once
-; EnsureQuestStarted has returned. Carries both AI packages (Follow when
-; GetStage < 50, Return Travel when GetStage >= 50); the engine's package
-; selector swaps between them as C++ advances the stage.
+; EnsureQuestStarted has returned. Carries both AI packages (Follow at
+; stages 10-49, Return Travel from 50), each conditioned on the quest
+; running as well; the engine's package selector swaps between them as
+; C++ advances the stage.
 ReferenceAlias Property Sender       Auto
 
 ; ReturnAnchor alias — Optional with no fill rule, force-filled from C++
 ; with an XMarker placed at the sender's own position before they are
 ; warped anywhere. The Return Travel package's Destination is
 ; `Alias:ReturnAnchor`, so the sender walks toward this marker during
-; ReturnHome, and Shutdown() deletes it.
+; ReturnHome. C++ deletes it on teardown, and Shutdown() too if the alias
+; still holds it.
 ReferenceAlias Property ReturnAnchor Auto
+
+; -----------------------------------------------------------------
+; Visit ids
+; -----------------------------------------------------------------
+;
+; Every call that fills or empties the aliases carries the id of the
+; visit it is for. C++ hands them out in increasing order and keeps the
+; counter in its co-save, which is saved alongside this quest, so an id
+; is never reused against this script's record of the ones it has seen.
+;
+; Separate calls into this script are separate stacks, and the VM runs
+; them in no promised order. Without the ids, a fill queued just before
+; a visit was torn down could land after the teardown, on a quest that
+; was already stopped -- and stopping it again never undoes that, so
+; the actor kept the alias and the Follow package for good.
+
+; The highest visit id this script has been told is over. A fill for a
+; visit at or below it is refused.
+int LastClosedVisitId = 0
+
+; The visit whose fills the aliases hold. 0 for a fill made before visits
+; carried ids.
+int HeldVisitId = 0
 
 ; -----------------------------------------------------------------
 ; Alias force-fill trampolines
@@ -28,25 +53,74 @@ ReferenceAlias Property ReturnAnchor Auto
 ; Game.GetFormEx (SKSE) rather than Game.GetForm, because the return
 ; anchor is a dynamically-created reference at 0xFF...... and needs the
 ; full 32-bit range.
+;
+; ForceRefTo waits on the frame, and other calls into this script run
+; while it does. An EndVisit that ran in that gap has already emptied
+; the alias and will not come back for this fill, so each fill checks
+; again once it lands and takes itself back out.
 
-Function FillSenderSlot(int aiFormID)
+Function FillSenderSlot(int aiVisitId, int aiFormID)
+    if aiVisitId <= LastClosedVisitId
+        Debug.Trace("[_ne_VisitQuest] FillSenderSlot: visit " + aiVisitId + " has already ended; not filling")
+        return
+    endIf
     ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
     if akRef == None
         Debug.Trace("[_ne_VisitQuest] FillSenderSlot: form " + aiFormID + " did not resolve to an ObjectReference")
         return
     endIf
+    HeldVisitId = aiVisitId
     Sender.ForceRefTo(akRef)
-    Debug.Trace("[_ne_VisitQuest] FillSenderSlot: Sender forced to " + akRef)
+    if aiVisitId <= LastClosedVisitId
+        Sender.Clear()
+        Debug.Trace("[_ne_VisitQuest] FillSenderSlot: visit " + aiVisitId + " ended while Sender was being filled; cleared")
+        return
+    endIf
+    Debug.Trace("[_ne_VisitQuest] FillSenderSlot: Sender forced to " + akRef + " for visit " + aiVisitId)
 EndFunction
 
-Function FillReturnAnchorSlot(int aiFormID)
+Function FillReturnAnchorSlot(int aiVisitId, int aiFormID)
+    if aiVisitId <= LastClosedVisitId
+        Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: visit " + aiVisitId + " has already ended; not filling")
+        return
+    endIf
     ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
     if akRef == None
         Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: form " + aiFormID + " did not resolve to an ObjectReference")
         return
     endIf
+    HeldVisitId = aiVisitId
     ReturnAnchor.ForceRefTo(akRef)
-    Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: ReturnAnchor forced to " + akRef)
+    if aiVisitId <= LastClosedVisitId
+        ReturnAnchor.Clear()
+        Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: visit " + aiVisitId + " ended while ReturnAnchor was being filled; cleared")
+        return
+    endIf
+    Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: ReturnAnchor forced to " + akRef + " for visit " + aiVisitId)
+EndFunction
+
+; -----------------------------------------------------------------
+; EndVisit -- the visit is over
+; -----------------------------------------------------------------
+;
+; Dispatched by C++ on every teardown, ahead of the terminal stage.
+; Records the visit as closed, so no fill for it can land afterwards,
+; and empties the aliases if what they hold is this visit's or older.
+; C++ deletes the anchor itself, by FormID, because the alias may never
+; have been filled with it.
+Function EndVisit(int aiVisitId)
+    if aiVisitId > LastClosedVisitId
+        LastClosedVisitId = aiVisitId
+    endIf
+    if HeldVisitId <= aiVisitId
+        Actor senderActor = Sender.GetActorReference()
+        Sender.Clear()
+        ReturnAnchor.Clear()
+        if senderActor != None
+            senderActor.EvaluatePackage()
+        endIf
+    endIf
+    Debug.Trace("[_ne_VisitQuest] EndVisit: visit " + aiVisitId + " closed (held=" + HeldVisitId + ")")
 EndFunction
 
 Function StartReturnTravel()
@@ -159,13 +233,21 @@ EndFunction
 ; Shutdown — terminal teardown
 ; -----------------------------------------------------------------
 ;
-; Called by the Stage 200 fragment. Stop() halts the quest; Reset()
-; clears the alias fills so both packages on the Sender alias release
-; and the actor's package stack falls back to their normal AI.
+; Called by the Stage 200 fragment. Both aliases are cleared explicitly
+; before Stop() rather than left to it: Stop() empties them only on a
+; quest that is running, and a fill can land on one that is not. Reset()
+; then puts the stage back to 0.
 Function Shutdown()
-    Stop()
+    if HeldVisitId > LastClosedVisitId
+        LastClosedVisitId = HeldVisitId
+    endIf
 
     ObjectReference returnAnchorRef = ReturnAnchor.GetReference()
+    Sender.Clear()
+    ReturnAnchor.Clear()
+
+    Stop()
+
     if returnAnchorRef != None
         returnAnchorRef.DisableNoWait()
         returnAnchorRef.Delete()
@@ -184,12 +266,23 @@ EndFunction
 ; the actor keeps the alias and both its packages. Clear() is what
 ; removes them.
 ;
-; The quest is stopped and reset as well when it reads as still
-; going, which is what a visit nobody is driving any more looks like.
-Function RepairOrphanedFills()
+; aiSparedVisitId is the visit that is about to start, when there is
+; one, and fills held for it are left alone: the repair is queued ahead
+; of them, but nothing promises it runs first. With no visit to spare,
+; the quest is stopped and reset as well when it reads as still going,
+; which is what a visit nobody is driving any more looks like.
+Function RepairOrphanedFills(int aiSparedVisitId)
     Actor senderActor = Sender.GetActorReference()
     ObjectReference returnAnchorRef = ReturnAnchor.GetReference()
-    Debug.Trace("[_ne_VisitQuest] RepairOrphanedFills: Sender=" + senderActor + " ReturnAnchor=" + returnAnchorRef + " stage=" + GetStage())
+    Debug.Trace("[_ne_VisitQuest] RepairOrphanedFills: Sender=" + senderActor + " ReturnAnchor=" + returnAnchorRef + " held=" + HeldVisitId + " spared=" + aiSparedVisitId + " stage=" + GetStage())
+
+    if aiSparedVisitId != 0 && HeldVisitId == aiSparedVisitId
+        return
+    endIf
+
+    if HeldVisitId > LastClosedVisitId
+        LastClosedVisitId = HeldVisitId
+    endIf
 
     Sender.Clear()
     ReturnAnchor.Clear()
@@ -199,7 +292,7 @@ Function RepairOrphanedFills()
         returnAnchorRef.Delete()
     endIf
 
-    if IsRunning() || GetStage() != 0
+    if aiSparedVisitId == 0 && (IsRunning() || GetStage() != 0)
         Stop()
         Reset()
     endIf

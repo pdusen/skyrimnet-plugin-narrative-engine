@@ -174,6 +174,12 @@ namespace NarrativeEngine
         std::mutex g_cooldownMutex;
         double g_lastVisitGameHours = 0.0;
 
+        // The last visit id handed out -- persisted via 'NBVS'. The quest
+        // script keeps its own record of which visits are over, and that
+        // is saved with the quest; counting from 1 again after a load would
+        // hand out ids it has already closed, and refuse every fill.
+        std::atomic<std::uint32_t> g_lastVisitId = 0;
+
         // Per-sender cooldowns — persisted via NPCVisitBeat_Persistence 'NBVS'.
         SenderCooldownTable g_senderCooldowns;
 
@@ -291,6 +297,24 @@ namespace NarrativeEngine
         // they tell.
         std::atomic<bool> g_visitInFlight = false;
 
+        // This visit's id, passed on every quest-script call that fills or
+        // empties the aliases, so the script can refuse a fill for a visit
+        // it has already been told is over. 0 between visits.
+        std::atomic<std::uint32_t> g_visitId = 0;
+
+        // Whether EnsureQuestStarted succeeded for this visit. A quest the
+        // visit never started has nothing to stop, and one it did start has
+        // to be stopped whatever its stage reads: a visit that fails just
+        // after starting it can still read stage 0, before the startup
+        // fragment has moved it on to Salutation.
+        std::atomic<bool> g_questStartedThisVisit = false;
+
+        // CLEANUP ticks spent waiting for the quest to come to rest, and
+        // how many it gets before the repair is sent in instead. ~10s at
+        // the 250ms poll -- far longer than any teardown takes to land.
+        std::atomic<int> g_cleanupWaitTicks = 0;
+        constexpr int kCleanupMaxWaitTicks = 40;
+
         // Why the visit has to be rolled back, held until the beat reaches
         // a point where that can be done cleanly: before the sender has
         // been moved, or once RUNNING can send them home. A string literal,
@@ -392,6 +416,9 @@ namespace NarrativeEngine
             g_runningTaskInFlight.store(false, std::memory_order_release);
             g_fillVerifyTicks.store(0, std::memory_order_release);
             g_arrivalMarkerFormID.store(0, std::memory_order_release);
+            g_visitId.store(0, std::memory_order_release);
+            g_questStartedThisVisit.store(false, std::memory_order_release);
+            g_cleanupWaitTicks.store(0, std::memory_order_release);
             g_escort.Clear();
             g_lastEscortSampleNormalSec.store(0.0, std::memory_order_release);
             {
@@ -598,8 +625,10 @@ namespace NarrativeEngine
         // The caller has already decided that nothing in there belongs to a
         // visit in flight; this only acts on it. A quest still reading a
         // stage is a visit nobody is driving any more, which counts as
-        // stale too where `stageCounts` says it can.
-        bool RepairStaleFills(const char* trigger, bool stageCounts)
+        // stale too where `stageCounts` says it can. With `spareThisVisit`
+        // the script leaves alone any fill this visit's own id made, which
+        // may land before the repair does.
+        bool RepairStaleFills(const char* trigger, bool stageCounts, bool spareThisVisit)
         {
             if (!g_visitQuest) {
                 return false;
@@ -624,7 +653,9 @@ namespace NarrativeEngine
                              senderActor->GetFormID(),
                              anchorRef->GetFormID());
             }
-            if (!QuestUtils::VMDispatchOnQuest(g_visitQuest, kQuestScriptName, "RepairOrphanedFills")) {
+            const auto spared = spareThisVisit ? g_visitId.load(std::memory_order_acquire) : 0u;
+            if (!QuestUtils::VMDispatchOnQuest(
+                    g_visitQuest, kQuestScriptName, "RepairOrphanedFills", static_cast<std::int32_t>(spared))) {
                 logger::error(
                     "NPCVisitBeat[REPAIR/{}]: could not queue RepairOrphanedFills on '{}'", trigger, kQuestScriptName);
             }
@@ -667,10 +698,58 @@ namespace NarrativeEngine
                              tag,
                              senderRef->GetFormID(),
                              expected);
-                RepairStaleFills(tag, /*stageCounts=*/false);
+                RepairStaleFills(tag, /*stageCounts=*/false, /*spareThisVisit=*/true);
                 return nullptr;
             }
             return senderRef->As<RE::Actor>();
+        }
+
+        // ---- Teardown ----------------------------------------------
+
+        // Delete the anchor this visit placed, by the FormID it was placed
+        // with. Main thread. Safe to call more than once.
+        //
+        // The quest's Shutdown used to be the only thing that deleted it,
+        // and it found the anchor through the alias -- so an anchor whose
+        // fill had not landed yet when the visit was torn down was never
+        // deleted, and the fill landing afterwards then put it back in the
+        // alias of a quest that was already stopped.
+        void DeleteReturnAnchor(const char* tag)
+        {
+            const auto anchorID = VisitState::GetSnapshot().returnAnchorFormID;
+            if (anchorID == 0) {
+                return;
+            }
+            auto* form = RE::TESForm::LookupByID(anchorID);
+            auto* ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+            if (!ref || ref->IsDeleted()) {
+                return;
+            }
+            ref->Disable();
+            ref->SetDelete(true);
+            logger::info("NPCVisitBeat[{}]: return anchor 0x{:08X} deleted", tag, anchorID);
+        }
+
+        // End the visit in the quest script, delete its anchor, and move the
+        // quest to `stage` if this visit ever started it. Main thread.
+        //
+        // EndVisit goes first and carries the visit's id: it records the
+        // visit as over, so a fill for it still queued in the VM is refused
+        // when it lands rather than filling a stopped quest. Any sender is
+        // sent home before this, while the anchor still exists.
+        void DispatchTeardown(std::uint32_t stage, const char* tag)
+        {
+            const auto visitId = g_visitId.load(std::memory_order_acquire);
+            if (!QuestUtils::VMDispatchOnQuest(
+                    g_visitQuest, kQuestScriptName, "EndVisit", static_cast<std::int32_t>(visitId))) {
+                logger::error("NPCVisitBeat[{}]: could not queue EndVisit for visit {}", tag, visitId);
+            }
+            DeleteReturnAnchor(tag);
+            if (g_questStartedThisVisit.load(std::memory_order_acquire)) {
+                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, stage);
+            } else {
+                logger::info("NPCVisitBeat[{}]: visit {} never started the quest -- no stage to set", tag, visitId);
+            }
         }
 
         // ---- Hard-abort helper -------------------------------------
@@ -909,7 +988,7 @@ namespace NarrativeEngine
             if (senderActor) {
                 SendSenderHome(senderActor, tag);
             }
-            QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+            DispatchTeardown(kStageRollback, tag);
             VisitConclusionPoll::Disarm();
             PushRolledBackHistory(senderActor);
             g_terminalCleanupDone.store(true);
@@ -1031,7 +1110,7 @@ namespace NarrativeEngine
             } else if (senderActor) {
                 logger::info("NPCVisitBeat[HARD-ABORT]: sender dead; skipping teleport/demote");
             }
-            QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageShutdown);
+            DispatchTeardown(kStageShutdown, "HARD-ABORT");
             PushAbortedHistory(senderActor);
             g_terminalCleanupDone.store(true);
         }
@@ -1249,7 +1328,7 @@ namespace NarrativeEngine
             } else if (senderActor) {
                 logger::info("NPCVisitBeat[RETURNHOME]: sender dead; skipping teleport/demote");
             }
-            QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageShutdown);
+            DispatchTeardown(kStageShutdown, "RETURNHOME");
             PushCompletedHistory();
             g_terminalCleanupDone.store(true);
         }
@@ -1518,6 +1597,7 @@ namespace NarrativeEngine
                     DeleteArrivalMarker(mt);
                     return false;
                 }
+                g_questStartedThisVisit.store(true, std::memory_order_release);
                 return true;
             });
 
@@ -1620,13 +1700,21 @@ namespace NarrativeEngine
                 // readback a tick later. Passed as FormIDs, not
                 // references; see
                 // docs/engine-findings/passing-references-to-papyrus-from-cpp.md.
-                const bool senderQueued = QuestUtils::VMDispatchOnQuest(
-                    g_visitQuest, kQuestScriptName, "FillSenderSlot", static_cast<std::int32_t>(sender->GetFormID()));
+                // Each carries the visit's id, so one still queued when
+                // the visit is torn down is refused rather than landing on
+                // a stopped quest.
+                const auto visitId = static_cast<std::int32_t>(g_visitId.load(std::memory_order_acquire));
+                const bool senderQueued = QuestUtils::VMDispatchOnQuest(g_visitQuest,
+                                                                        kQuestScriptName,
+                                                                        "FillSenderSlot",
+                                                                        visitId,
+                                                                        static_cast<std::int32_t>(sender->GetFormID()));
                 bool anchorQueued = true;
                 if (snap.returnAnchorFormID != 0) {
                     anchorQueued = QuestUtils::VMDispatchOnQuest(g_visitQuest,
                                                                  kQuestScriptName,
                                                                  "FillReturnAnchorSlot",
+                                                                 visitId,
                                                                  static_cast<std::int32_t>(snap.returnAnchorFormID));
                 }
                 // Queued is not landed -- that is what VerifyingFill is
@@ -1685,7 +1773,15 @@ namespace NarrativeEngine
                 return out;
             });
 
-            if (filled.sender != 0 && (!anchorExpected || filled.anchor != 0)) {
+            // The sender has to be THIS visit's sender. A non-empty alias is
+            // not enough: one left over from an earlier visit would pass
+            // that test before this visit's own fill had landed at all.
+            if (filled.sender != 0 && filled.sender != snap.senderFormID) {
+                logger::warn("NPCVisitBeat: Sender alias holds 0x{:08X}, not this visit's 0x{:08X} -- still waiting",
+                             filled.sender,
+                             snap.senderFormID);
+            }
+            if (filled.sender == snap.senderFormID && filled.sender != 0 && (!anchorExpected || filled.anchor != 0)) {
                 logger::info("NPCVisitBeat: fills verified -- Sender=0x{:08X} ReturnAnchor=0x{:08X}",
                              filled.sender,
                              filled.anchor);
@@ -1713,9 +1809,10 @@ namespace NarrativeEngine
                 auto snapshot = VisitState::GetSnapshot();
                 std::string reason;
                 if (auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snapshot.senderFormID, &reason)) {}
-                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                DispatchTeardown(kStageRollback, "VERIFY-FILL");
                 return 0;
             });
+            g_terminalCleanupDone.store(true);
             // The sender's own fill is what the beat cannot proceed
             // without; a missing anchor only costs the walk home, so the
             // two are reported apart.
@@ -2233,25 +2330,27 @@ namespace NarrativeEngine
             });
         }
 
+        // Tear down what this visit left, for the paths that reach CLEANUP
+        // without having done so themselves: a COMPOSE that failed after
+        // the quest was started, mostly.
+        //
+        // Whether to stop the quest used to be read off its stage, which a
+        // quest started a moment ago still reads as 0 -- so a visit failing
+        // in that window walked away from a running quest. Now it is
+        // whether this visit started it. One that never did has filled
+        // nothing, so anything the aliases hold is a leftover.
         void Cleanup(const PluginThread::Token& pt)
         {
             MainThread::FireAndForget(pt, [](const MainThread::Token&) {
-                // If cleanup wasn't already triggered by a rollback / abort
-                // path, run the terminal shutdown chain now — this covers
-                // the "COMPOSE failed before any stage was set" case where
-                // no other path has cleared state.
                 if (!g_visitQuest) {
                     VisitState::Reset();
                     return;
                 }
-                const auto stage = g_visitQuest->GetCurrentStageID();
-                if (stage != 0 && stage != kStageShutdown && stage != kStageRollback) {
-                    // Force it into rollback so the Papyrus Shutdown
-                    // fragment tears down alias fills. Guarded so we don't
-                    // double-drive a stage that's already terminal.
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                if (g_questStartedThisVisit.load(std::memory_order_acquire)) {
+                    DispatchTeardown(kStageRollback, "CLEANUP");
+                } else {
+                    RepairStaleFills("cleanup", /*stageCounts=*/false, /*spareThisVisit=*/false);
                 }
-                // Give Papyrus a beat, then clear VisitState.
                 VisitState::Reset();
             });
         }
@@ -2466,6 +2565,7 @@ namespace NarrativeEngine
         VisitState::Reset();
         VisitState::SetComposingSender(true);
         g_visitInFlight.store(true, std::memory_order_release);
+        g_visitId.store(g_lastVisitId.fetch_add(1, std::memory_order_acq_rel) + 1, std::memory_order_release);
         if (!senderParsed) {
             g_subPhase.Fail(ComposeSubPhase::Failed, std::move(failureReason));
         } else {
@@ -2474,7 +2574,8 @@ namespace NarrativeEngine
             g_paramUrgency = urgency;
             g_paramMotivatingMemory = std::move(motivatingMemory);
         }
-        logger::info("NPCVisitBeat::OnStart: sender=0x{:08X} urgency={}",
+        logger::info("NPCVisitBeat::OnStart: visit {} sender=0x{:08X} urgency={}",
+                     g_visitId.load(std::memory_order_acquire),
                      senderParsed.value_or(0),
                      urgency == BeatParamHelpers::UrgencyHint::Low    ? "low"
                      : urgency == BeatParamHelpers::UrgencyHint::High ? "high"
@@ -2555,8 +2656,9 @@ namespace NarrativeEngine
                 // aliases now is left over from one that never let go. The
                 // compose call ahead takes seconds, which gives the
                 // clearing time to land before this visit's own fills do.
-                MainThread::Run(
-                    pt, [](const MainThread::Token&) { return RepairStaleFills("dispatch", /*stageCounts=*/false); });
+                MainThread::Run(pt, [](const MainThread::Token&) {
+                    return RepairStaleFills("dispatch", /*stageCounts=*/false, /*spareThisVisit=*/true);
+                });
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
                 FireComposeLLM();
                 return {};
@@ -2607,30 +2709,50 @@ namespace NarrativeEngine
         }
 
         case BeatState::CLEANUP: {
-            // Wait for the quest's terminal shutdown fragment to
-            // land the stage back at 0, then return to NOT_RUNNING.
-            if (g_visitQuest) {
-                const auto stage = g_visitQuest->GetCurrentStageID();
-                if (stage == 0) {
-                    logger::info("NPCVisitBeat: CLEANUP done; returning to NOT_RUNNING");
-                    VisitState::Reset();
-                    VisitState::SetComposingSender(false);
-                    g_visitInFlight.store(false, std::memory_order_release);
-                    return {BeatState::NOT_RUNNING};
-                }
-                // If we haven't yet dispatched a terminal stage
-                // (COMPOSE failed before EnsureQuestStarted, etc.)
-                // and the quest isn't running, we can exit
-                // immediately.
-                if (stage != kStageShutdown && stage != kStageRollback && !g_terminalCleanupDone.load()) {
-                    Cleanup(pt);
-                    g_terminalCleanupDone.store(true);
-                }
-            } else {
+            const auto finish = [] {
                 VisitState::Reset();
                 VisitState::SetComposingSender(false);
                 g_visitInFlight.store(false, std::memory_order_release);
-                return {BeatState::NOT_RUNNING};
+                return TickResult{BeatState::NOT_RUNNING};
+            };
+            if (!g_visitQuest) {
+                return finish();
+            }
+            // Every path that tore the visit down on its own set the latch;
+            // anything that reached CLEANUP without it is torn down here.
+            if (!g_terminalCleanupDone.exchange(true)) {
+                Cleanup(pt);
+            }
+            // Come to rest is the aliases empty and, for a quest this visit
+            // started, back at stage 0. The stage alone was the old test,
+            // and stage 0 is also what a quest reads before its startup
+            // fragment has run, and after a fill has landed on it stopped.
+            struct Rest
+            {
+                std::uint16_t stage = 0;
+                bool held = false;
+            };
+            const auto rest = MainThread::Run(pt, [](const MainThread::Token&) {
+                Rest r;
+                r.stage = g_visitQuest->GetCurrentStageID();
+                r.held = (g_senderAlias && g_senderAlias->GetReference())
+                         || (g_returnAnchorAlias && g_returnAnchorAlias->GetReference());
+                return r;
+            });
+            const bool started = g_questStartedThisVisit.load(std::memory_order_acquire);
+            if (!rest.held && (!started || rest.stage == 0)) {
+                logger::info("NPCVisitBeat: CLEANUP done; returning to NOT_RUNNING");
+                return finish();
+            }
+            if (g_cleanupWaitTicks.fetch_add(1, std::memory_order_acq_rel) + 1 >= kCleanupMaxWaitTicks) {
+                logger::warn("NPCVisitBeat: CLEANUP gave up waiting for the quest to come to rest (stage {}, "
+                             "aliases {}) -- sending the repair in",
+                             rest.stage,
+                             rest.held ? "held" : "empty");
+                MainThread::Run(pt, [](const MainThread::Token&) {
+                    return RepairStaleFills("cleanup-timeout", /*stageCounts=*/true, /*spareThisVisit=*/false);
+                });
+                return finish();
             }
             return {};
         }
@@ -2669,7 +2791,7 @@ namespace NarrativeEngine
     {
         bool RepairStaleVisitQuest(const MainThread::Token& /*mt*/, const char* trigger)
         {
-            return RepairStaleFills(trigger, /*stageCounts=*/true);
+            return RepairStaleFills(trigger, /*stageCounts=*/true, /*spareThisVisit=*/false);
         }
     } // namespace NPCVisitBeat_Repair
 
@@ -2778,12 +2900,16 @@ namespace NarrativeEngine
 
     // ---------------------------------------------------------------
     // Cosave — 'NBVS' record.
-    // Layout (v3, current):
+    // Layout (v4, current):
     //   u32    senderCooldownCount
     //   [FormID(u32) + stamp(double)] * senderCooldownCount
     //   u32    senderMemoryWatermarkCount
     //   [FormID(u32) + stamp(double)] * senderMemoryWatermarkCount
     //   double lastVisitGameHours
+    //   u32    lastVisitId
+    // Layout (v3, legacy — accepted on load): v4 without the trailing
+    //   lastVisitId. Such a save predates visit ids, so its quest script
+    //   has closed none, and counting from 0 is right.
     // Layout (v2, legacy — accepted on load): v3 without the trailing
     //   lastVisitGameHours.
     // Layout (v1, legacy — accepted on load): v2 without the watermark
@@ -2796,7 +2922,7 @@ namespace NarrativeEngine
 
     namespace NPCVisitBeat_Persistence
     {
-        constexpr std::uint32_t kRecordVersion = 3;
+        constexpr std::uint32_t kRecordVersion = 4;
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
@@ -2815,6 +2941,8 @@ namespace NarrativeEngine
                 lastVisit = g_lastVisitGameHours;
             }
             intfc->WriteRecordData(lastVisit);
+            const std::uint32_t lastVisitId = g_lastVisitId.load(std::memory_order_acquire);
+            intfc->WriteRecordData(lastVisitId);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
@@ -2861,8 +2989,17 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_cooldownMutex);
                 g_lastVisitGameHours = lastVisit;
             }
-            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns, lastVisitGameHours={:.2f} (record v{})",
+            // The visit id counter was added in v4.
+            std::uint32_t lastVisitId = 0;
+            if (version >= 4 && intfc->ReadRecordData(lastVisitId) != sizeof(lastVisitId)) {
+                logger::error("NPCVisitBeat::OnLoad: short read on lastVisitId; cleared");
+                lastVisitId = 0;
+            }
+            g_lastVisitId.store(lastVisitId, std::memory_order_release);
+            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns, lastVisitGameHours={:.2f}, "
+                         "lastVisitId={} (record v{})",
                          lastVisit,
+                         lastVisitId,
                          version);
         }
 
@@ -2872,6 +3009,7 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_cooldownMutex);
                 g_lastVisitGameHours = 0.0;
             }
+            g_lastVisitId.store(0, std::memory_order_release);
             g_senderCooldowns.Clear();
             g_senderMemoryWatermarks.Clear();
         }
