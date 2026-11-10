@@ -13,6 +13,7 @@ declare global {
         ne_setTickEnabled?:       (arg: string) => void;
         ne_setAllActionsEnabled?: (arg: string) => void;
         ne_abortRunningBeat?:     (arg: string) => void;
+        ne_releaseStuckVisitor?:  (arg: string) => void;
     }
 }
 
@@ -62,6 +63,11 @@ export function DispatchTab({ state, nowSeconds }: Props) {
         setConfirmOpen(false);
     };
     const onCancelAbort = () => setConfirmOpen(false);
+    // Live only while the visit quest holds somebody no visit is running for.
+    const stuckHold = state.visit.quest_hold?.stale ? state.visit.quest_hold : null;
+    const onReleaseStuck = () => {
+        window.ne_releaseStuckVisitor?.('');
+    };
     // The two gates that apply to the table as a whole, as opposed to the
     // per-beat cooldown in its own column.
     const gates = state.timers.director;
@@ -109,6 +115,17 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                         : 'No narrative beat is currently in flight.'}
                 >
                     Abort Running Beat
+                </button>
+                <button
+                    type="button"
+                    className="bulk-button"
+                    disabled={!stuckHold}
+                    onClick={onReleaseStuck}
+                    title={stuckHold
+                        ? `Release ${stuckHold.sender_name || 'the NPC'} from the visit quest, which still holds them with no visit running`
+                        : 'The visit quest holds nobody.'}
+                >
+                    Release Stuck Visitor
                 </button>
             </section>
             <section className="panel action-dispatch">

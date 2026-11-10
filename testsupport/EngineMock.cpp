@@ -557,7 +557,22 @@ bool RE::BSScript::IVirtualMachine::DispatchMethodCall(
         mock->papyrus.onDispatch(sent);
     }
 
+    // The VM calls this back once the call has run. Nothing here runs it,
+    // so it is reported done the moment it is queued -- after the hook,
+    // which is what stands in for the call doing its work.
+    if (a_result && mock->papyrus.dispatchSucceeds) {
+        ++mock->papyrus.callbacksRun;
+        (*a_result)(RE::BSScript::Variable{});
+    }
+
     return mock->papyrus.dispatchSucceeds;
+}
+
+RE::BSScript::IStackCallbackFunctor::IStackCallbackFunctor() : pad0C(0) {}
+
+bool RE::BSScript::IStackCallbackFunctor::CanSave() const
+{
+    return false;
 }
 
 // What `MakeFunctionArguments()` hands back for a call with no arguments. The

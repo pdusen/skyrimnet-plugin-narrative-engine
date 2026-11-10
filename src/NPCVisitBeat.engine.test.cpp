@@ -293,7 +293,7 @@ namespace
 
     // Stand in for the force-fills landing.
     //
-    // The beat dispatches FillSenderSlot and FillReturnAnchorSlot into the
+    // The beat dispatches FillSlots, which fills both, into the
     // Papyrus VM, which the harness records but does not run, so nothing
     // would ever fill these. Pre-filling them means VerifyingFill sees what
     // it would have seen a tick after a real dispatch. That the dispatch was
@@ -316,9 +316,13 @@ namespace
     {
         engine.papyrus.onDispatch =
             [&engine, world, fillSender, fillAnchor](const EngineMock::PapyrusState::Dispatch& sent) {
-                if (sent.methodName == "FillSenderSlot" && fillSender) {
+                if (sent.methodName != "FillSlots") {
+                    return;
+                }
+                if (fillSender) {
                     engine.FillRefAlias(world.quest.aliases.at(0), world.sender);
-                } else if (sent.methodName == "FillReturnAnchorSlot" && fillAnchor) {
+                }
+                if (fillAnchor) {
                     engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
                 }
             };
@@ -518,10 +522,14 @@ namespace
         return false;
     }
 
+    // Whether `stage` was asked for. The terminal stages travel inside
+    // EndVisit, which sets them itself once the visit is closed; the rest are
+    // a SetStage of their own.
     bool DispatchedStage(const EngineMock& engine, std::int32_t stage)
     {
         for (std::size_t i = 0; i < engine.papyrus.dispatches.size(); ++i) {
-            if (engine.papyrus.dispatches[i].methodName != "SetStage")
+            const auto& method = engine.papyrus.dispatches[i].methodName;
+            if (method != "SetStage" && method != "EndVisit")
                 continue;
             for (const auto packed : engine.papyrus.packedInts) {
                 if (packed == stage)
@@ -1032,10 +1040,11 @@ TEST_CASE("NPCVisitBeat waits for the fills it asked for", "[NPCVisitBeat][engin
         SECTION("should have asked Papyrus for both of them")
         {
             REQUIRE(RunCompose(beat) == BeatState::RUNNING);
-            // ForceRefTo has no native binding, so these two dispatches are
-            // the only way either alias is ever filled.
-            REQUIRE(DispatchedMethod(engine, "FillSenderSlot"));
-            REQUIRE(DispatchedMethod(engine, "FillReturnAnchorSlot"));
+            // ForceRefTo has no native binding, so this dispatch is the
+            // only way either alias is ever filled -- both in the one call,
+            // so a teardown cannot land between the two.
+            REQUIRE(DispatchedMethod(engine, "FillSlots"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "FillSenderSlot"));
         }
 
         SECTION("should have thrown away the marker it warped them onto")
@@ -1547,7 +1556,7 @@ TEST_CASE("NPCVisitBeat ends a visit the player fast-travels away from", "[NPCVi
             // The shutdown empties the alias, which is why the trampoline is
             // handed the visitor's id; the order is the other half of that.
             const auto recorded = DispatchIndex(engine, "RecordPlayerLeftAbruptly");
-            const auto shutdown = DispatchIndex(engine, "SetStage");
+            const auto shutdown = DispatchIndex(engine, "EndVisit");
             REQUIRE(recorded >= 0);
             REQUIRE(shutdown > recorded);
             REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
@@ -1928,16 +1937,38 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
         engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
         PlaceSenderAway(engine, world.sender, 9000.0f);
 
-        SECTION("should put them back where they were standing anyway")
+        SECTION("should send them to the anchor the beat placed anyway")
         {
-            // There is no reference left to move them onto, but the
-            // snapshot still knows where the beat found them. This used to
-            // be a MoveTo onto the sender's own reference, which moves
-            // nobody anywhere and left them wherever the visit ended.
+            // The alias never took it, but the anchor itself is still
+            // standing, and its FormID is in the snapshot. A reference
+            // carries them across a cell boundary where a position cannot.
             const auto snap = VisitState::GetSnapshot();
             StageTick(beat);
-            REQUIRE(world.sender->GetPosition().x == snap.returnPosition.x);
-            REQUIRE(world.sender->GetPosition().y == snap.returnPosition.y);
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == snap.returnAnchorFormID);
+        }
+
+        SECTION("and the anchor itself is gone")
+        {
+            const auto snap = VisitState::GetSnapshot();
+            if (auto* form = RE::TESForm::LookupByID(snap.returnAnchorFormID)) {
+                if (auto* anchor = form->As<RE::TESObjectREFR>()) {
+                    anchor->SetDelete(true);
+                }
+            }
+
+            SECTION("should put them back where they were standing")
+            {
+                // There is no reference left to move them onto, but the
+                // snapshot still knows where the beat found them. This used
+                // to be a MoveTo onto the sender's own reference, which
+                // moves nobody anywhere and left them wherever the visit
+                // ended.
+                StageTick(beat);
+                REQUIRE(world.sender->GetPosition().x == snap.returnPosition.x);
+                REQUIRE(world.sender->GetPosition().y == snap.returnPosition.y);
+            }
         }
     }
 }
@@ -2521,7 +2552,7 @@ TEST_CASE("NPCVisitBeat lets go of a fill no visit owns", "[NPCVisitBeat][engine
         SECTION("should clear it before filling anything of its own")
         {
             REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
-            REQUIRE_FALSE(DispatchedMethod(engine, "FillSenderSlot"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "FillSlots"));
         }
     }
 
@@ -2535,15 +2566,23 @@ TEST_CASE("NPCVisitBeat lets go of a fill no visit owns", "[NPCVisitBeat][engine
         engine.FillRefAlias(world.quest.aliases.at(0), stranger);
         AbortFromMainThread(beat);
 
-        SECTION("should not send the stranger home as though they were the visitor")
+        SECTION("should hand the stranger to the repair rather than treat them as the visitor")
         {
-            // They are sent home, but by the repair, which also has the
-            // script let go of them. The abort itself only ever moves its
-            // own sender.
+            // The repair sends them home and has the script let go of them.
             REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
+            bool strangerMoved = false;
             for (const auto& teleport : engine.questControl.teleports) {
-                REQUIRE(teleport.moverFormID != kSender);
+                strangerMoved = strangerMoved || teleport.moverFormID == kOtherSender;
             }
+            REQUIRE(strangerMoved);
+        }
+
+        SECTION("should still send its own sender home, alias or no alias")
+        {
+            // They were warped in, so they are standing wherever the visit
+            // left them whatever the alias says.
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
         }
 
         SECTION("should still shut the quest down")
@@ -2577,12 +2616,13 @@ TEST_CASE("NPCVisitBeat ends each visit in the quest script before stopping it",
         engine.papyrus.dispatches.clear();
         AbortFromMainThread(beat);
 
-        SECTION("should close the visit before shutting the quest down")
+        SECTION("should close the visit and shut the quest down in the one call")
         {
-            const auto ended = DispatchIndex(engine, "EndVisit");
-            const auto stopped = DispatchIndex(engine, "SetStage");
-            REQUIRE(ended >= 0);
-            REQUIRE(stopped > ended);
+            // Separate calls could run in either order. EndVisit sets the
+            // shutdown stage itself, so the stage never lands first.
+            REQUIRE(DispatchedMethod(engine, "EndVisit"));
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+            REQUIRE_FALSE(DispatchedMethod(engine, "SetStage"));
         }
 
         SECTION("should delete the anchor it placed, whether or not the alias ever held it")
@@ -2609,6 +2649,92 @@ TEST_CASE("NPCVisitBeat ends each visit in the quest script before stopping it",
         {
             REQUIRE(engine.questControl.started.empty());
             REQUIRE_FALSE(DispatchedMethod(engine, "SetStage"));
+            REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat looks after a visitor whose fill never landed", "[NPCVisitBeat][engine]")
+{
+    // The warp moves the sender before the fill is even queued, so a fill
+    // that never lands leaves them standing at the arrival point. Every
+    // teardown used to look for them in the alias, find nobody, and leave
+    // them there.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    beat.OnStart(BeatContext{}, SenderParams());
+
+    SECTION("when the fills time out")
+    {
+        REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+
+        SECTION("should send the warped sender home")
+        {
+            // Two teleports: the warp in, and the walk home it stands in for.
+            REQUIRE(engine.questControl.teleports.size() >= 2);
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+        }
+
+        SECTION("should have heard the fill call run")
+        {
+            REQUIRE(engine.papyrus.callbacksRun > 0);
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat keeps candidates out of a quest that still holds them", "[NPCVisitBeat][engine]")
+{
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+
+    const auto held = [&](RE::Actor* actor) {
+        bool result = false;
+        PluginThread::detail::JobDispatcher::Invoke([&](const PluginThread::Token& pt) {
+            result = NarrativeEngine::MainThread::Run(
+                pt, [&](const NarrativeEngine::MainThread::Token&) { return Query::IsHeldByVisitQuest(actor); });
+        });
+        return result;
+    };
+
+    SECTION("when the Sender alias holds them")
+    {
+        engine.FillRefAlias(world.quest.aliases.at(0), world.sender);
+
+        SECTION("should count them as held")
+        {
+            REQUIRE(held(world.sender));
+        }
+
+        SECTION("should not offer the beat on them alone")
+        {
+            // The only candidate is the one stuck in the quest.
+            REQUIRE_FALSE(NPCVisitBeat{}.IsAvailable(BeatContext{}));
+        }
+    }
+
+    SECTION("when nothing holds them")
+    {
+        SECTION("should leave them free")
+        {
+            REQUIRE_FALSE(held(world.sender));
+        }
+
+        SECTION("should offer the beat on them")
+        {
+            REQUIRE(NPCVisitBeat{}.IsAvailable(BeatContext{}));
         }
     }
 }

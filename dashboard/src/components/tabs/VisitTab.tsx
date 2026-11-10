@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { VisitTabState, VisitTimers } from '../../types';
+import type { VisitQuestHold, VisitTabState, VisitTimers } from '../../types';
 import { TimerPanel, TimerRow } from '../TimerPanel';
 
 interface Props {
@@ -81,10 +81,33 @@ export function VisitTab({ visit, timers, nowSeconds }: Props): ReactNode {
                     </div>
                 )}
             </TimerPanel>
+            <StuckVisitorPanel hold={visit.quest_hold} />
             <CurrentConversationPanel visit={visit} nowSeconds={nowSeconds} />
             <RecentPollsPanel verdicts={visit.recent_verdicts} nowSeconds={nowSeconds} />
             <VisitHistoryPanel history={visit.history} nowSeconds={nowSeconds} />
         </div>
+    );
+}
+
+// Shown only when the visit quest holds somebody with no visit running.
+// That state is invisible everywhere else on the dashboard, and the NPC
+// in it follows the player around until it is cleared.
+function StuckVisitorPanel({ hold }: { hold: VisitQuestHold | undefined }): ReactNode {
+    if (!hold || !hold.stale) {
+        return null;
+    }
+    const who = hold.sender_name
+        || (hold.sender_form_id !== 0 ? `0x${hold.sender_form_id.toString(16).toUpperCase()}` : '');
+    const what = who
+        ? `The visit quest still holds ${who}, with no visit running. They may be following you.`
+        : `The visit quest still reads stage ${hold.stage}, with no visit running.`;
+    return (
+        <section className="panel">
+            <h3>Stuck Visitor</h3>
+            <p className="empty-state">
+                {`${what} Release Stuck Visitor on the Dispatch tab clears it now; the plugin also clears it on its own within a minute.`}
+            </p>
+        </section>
     );
 }
 

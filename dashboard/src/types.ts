@@ -229,10 +229,23 @@ export interface VisitHistoryEntry {
     duration_seconds: number;
 }
 
+// What the visit quest itself holds, which is not always what `current`
+// says. `stale` is a hold with no visit in flight: an NPC whose fill
+// outlived their visit, still under its Follow package.
+export interface VisitQuestHold {
+    sender_form_id: number;
+    sender_name: string;
+    anchor_form_id: number;
+    stage: number;
+    stale: boolean;
+}
+
 export interface VisitTabState {
     current: VisitCurrent | null;
     recent_verdicts: VisitVerdict[];
     history: VisitHistoryEntry[];
+    // Optional so a payload from before it existed still renders.
+    quest_hold?: VisitQuestHold;
 }
 
 // One entry per action registered with ActionRegistry. The C++ side

@@ -199,6 +199,10 @@ namespace NarrativeEngine::Testing
             // the fill is dispatched, say -- without pre-filling it before
             // the code under test has asked.
             std::function<void(const Dispatch&)> onDispatch;
+
+            // Completion callbacks the code under test handed the VM, each
+            // run as soon as its call was queued.
+            int callbacksRun = 0;
         } papyrus;
 
         // SKSE's co-save stream. Byte-accurate rather than value-accurate:

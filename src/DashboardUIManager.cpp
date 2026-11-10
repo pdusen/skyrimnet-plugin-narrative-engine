@@ -16,6 +16,7 @@
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <MainThread.h>
+#include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
 #include <PlotFactionRoster.h>
@@ -733,6 +734,24 @@ namespace NarrativeEngine::DashboardUIManager
 
         // Backs the Dispatch tab's Abort button (after confirmation).
         // No-ops backend-side if no beat is in flight.
+        // Backs the Dispatch tab's Release Stuck Visitor button, which is
+        // live only while the visit quest holds somebody with no visit in
+        // flight. A visit that IS in flight is the Abort button's business.
+        void OnReleaseStuckVisitor(const char* /*argument*/)
+        {
+            logger::info("DashboardUIManager: ne_releaseStuckVisitor received");
+            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [](const MainThread::Token& mt) {
+                    if (BeatSystem::GetRunningBeatName() == "npc_visit") {
+                        logger::info("DashboardUIManager: a visit is in flight -- leaving it to Abort");
+                    } else if (!NPCVisitBeat_Repair::RepairStaleVisitQuest(mt, "dashboard")) {
+                        logger::info("DashboardUIManager: the visit quest holds nobody -- nothing to release");
+                    }
+                    PushFullState();
+                });
+            });
+        }
+
         void OnAbortRunningBeat(const char* /*argument*/)
         {
             logger::info("DashboardUIManager: ne_abortRunningBeat received");
@@ -1061,6 +1080,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_releaseStuckVisitor", &OnReleaseStuckVisitor);
         PrismaUI_API::RegisterJSListener(g_view, "ne_forcePlotTicks", &OnForcePlotTicks);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPlotTicksEnabled", &OnSetPlotTicksEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
@@ -1464,6 +1484,18 @@ namespace NarrativeEngine::DashboardUIManager
                 {"current", current},
                 {"recent_verdicts", std::move(verdictsJson)},
                 {"history", std::move(historyJson)},
+                // What the quest itself holds, which is not always what
+                // `current` says: a fill that outlived its visit leaves an
+                // NPC here with no visit in flight, and before this the
+                // dashboard showed nothing of it.
+                {"quest_hold",
+                 {
+                     {"sender_form_id", reads.visitHoldSenderFormID},
+                     {"sender_name", reads.visitHoldSenderName},
+                     {"anchor_form_id", reads.visitHoldAnchorFormID},
+                     {"stage", reads.visitHoldStage},
+                     {"stale", reads.visitHoldStale},
+                 }},
             };
         }
 
@@ -1688,8 +1720,17 @@ namespace NarrativeEngine::DashboardUIManager
         // BeatRegistry, PhaseTracker, DecisionLog, VisitState,
         // VisitConclusionPoll, SkyrimNetAPI event tail) are all
         // mutex-guarded or DLL-thread-safe.
-        AsyncDispatch::EnqueueWork([](const PluginThread::Token&) {
+        AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
             DashboardEngineReads reads;
+            MainThread::Run(pt, [&reads](const MainThread::Token&) {
+                const auto hold = NPCVisitBeat_Query::GetQuestHold();
+                reads.visitHoldSenderFormID = hold.senderFormID;
+                reads.visitHoldSenderName = hold.senderName;
+                reads.visitHoldAnchorFormID = hold.anchorFormID;
+                reads.visitHoldStage = hold.stage;
+                reads.visitHoldStale = hold.stale;
+                return 0;
+            });
             if (auto* cal = RE::Calendar::GetSingleton()) {
                 reads.currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
             }

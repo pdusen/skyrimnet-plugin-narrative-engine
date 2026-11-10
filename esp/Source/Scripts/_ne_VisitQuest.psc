@@ -54,61 +54,60 @@ int HeldVisitId = 0
 ; anchor is a dynamically-created reference at 0xFF...... and needs the
 ; full 32-bit range.
 ;
+; Both aliases are filled in the one call, so they cannot be torn down
+; in between, and C++ hears about one completion rather than two.
+;
 ; ForceRefTo waits on the frame, and other calls into this script run
 ; while it does. An EndVisit that ran in that gap has already emptied
-; the alias and will not come back for this fill, so each fill checks
+; the aliases and will not come back for this fill, so the fill checks
 ; again once it lands and takes itself back out.
 
-Function FillSenderSlot(int aiVisitId, int aiFormID)
+Function FillSlots(int aiVisitId, int aiSenderFormID, int aiAnchorFormID)
     if aiVisitId <= LastClosedVisitId
-        Debug.Trace("[_ne_VisitQuest] FillSenderSlot: visit " + aiVisitId + " has already ended; not filling")
+        Debug.Trace("[_ne_VisitQuest] FillSlots: visit " + aiVisitId + " has already ended; not filling")
         return
     endIf
-    ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
-    if akRef == None
-        Debug.Trace("[_ne_VisitQuest] FillSenderSlot: form " + aiFormID + " did not resolve to an ObjectReference")
+    ObjectReference senderRef = Game.GetFormEx(aiSenderFormID) as ObjectReference
+    if senderRef == None
+        Debug.Trace("[_ne_VisitQuest] FillSlots: sender form " + aiSenderFormID + " did not resolve to an ObjectReference")
         return
     endIf
+    ObjectReference anchorRef = None
+    if aiAnchorFormID != 0
+        anchorRef = Game.GetFormEx(aiAnchorFormID) as ObjectReference
+        if anchorRef == None
+            Debug.Trace("[_ne_VisitQuest] FillSlots: anchor form " + aiAnchorFormID + " did not resolve to an ObjectReference")
+        endIf
+    endIf
+
     HeldVisitId = aiVisitId
-    Sender.ForceRefTo(akRef)
+    Sender.ForceRefTo(senderRef)
+    if anchorRef != None
+        ReturnAnchor.ForceRefTo(anchorRef)
+    endIf
+
     if aiVisitId <= LastClosedVisitId
         Sender.Clear()
-        Debug.Trace("[_ne_VisitQuest] FillSenderSlot: visit " + aiVisitId + " ended while Sender was being filled; cleared")
-        return
-    endIf
-    Debug.Trace("[_ne_VisitQuest] FillSenderSlot: Sender forced to " + akRef + " for visit " + aiVisitId)
-EndFunction
-
-Function FillReturnAnchorSlot(int aiVisitId, int aiFormID)
-    if aiVisitId <= LastClosedVisitId
-        Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: visit " + aiVisitId + " has already ended; not filling")
-        return
-    endIf
-    ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
-    if akRef == None
-        Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: form " + aiFormID + " did not resolve to an ObjectReference")
-        return
-    endIf
-    HeldVisitId = aiVisitId
-    ReturnAnchor.ForceRefTo(akRef)
-    if aiVisitId <= LastClosedVisitId
         ReturnAnchor.Clear()
-        Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: visit " + aiVisitId + " ended while ReturnAnchor was being filled; cleared")
+        Debug.Trace("[_ne_VisitQuest] FillSlots: visit " + aiVisitId + " ended while its aliases were being filled; cleared")
         return
     endIf
-    Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: ReturnAnchor forced to " + akRef + " for visit " + aiVisitId)
+    Debug.Trace("[_ne_VisitQuest] FillSlots: Sender=" + senderRef + " ReturnAnchor=" + anchorRef + " for visit " + aiVisitId)
 EndFunction
 
 ; -----------------------------------------------------------------
 ; EndVisit -- the visit is over
 ; -----------------------------------------------------------------
 ;
-; Dispatched by C++ on every teardown, ahead of the terminal stage.
-; Records the visit as closed, so no fill for it can land afterwards,
-; and empties the aliases if what they hold is this visit's or older.
-; C++ deletes the anchor itself, by FormID, because the alias may never
-; have been filled with it.
-Function EndVisit(int aiVisitId)
+; Dispatched by C++ on every teardown. Records the visit as closed, so
+; no fill for it can land afterwards, empties the aliases if what they
+; hold is this visit's or older, and then sets aiStage -- the rollback
+; or shutdown stage -- when it is not 0. Setting the stage here rather
+; than in a call of its own means the shutdown always runs after the
+; visit is closed. C++ passes 0 for a visit that never started the
+; quest, and deletes the anchor itself, by FormID, because the alias
+; may never have been filled with it.
+Function EndVisit(int aiVisitId, int aiStage)
     if aiVisitId > LastClosedVisitId
         LastClosedVisitId = aiVisitId
     endIf
@@ -120,7 +119,10 @@ Function EndVisit(int aiVisitId)
             senderActor.EvaluatePackage()
         endIf
     endIf
-    Debug.Trace("[_ne_VisitQuest] EndVisit: visit " + aiVisitId + " closed (held=" + HeldVisitId + ")")
+    Debug.Trace("[_ne_VisitQuest] EndVisit: visit " + aiVisitId + " closed (held=" + HeldVisitId + ", stage=" + aiStage + ")")
+    if aiStage != 0
+        SetStage(aiStage)
+    endIf
 EndFunction
 
 Function StartReturnTravel()
@@ -217,8 +219,8 @@ EndFunction
 ; player fast-travels away mid-visit.
 ;
 ; Takes the sender's FormID rather than reading the Sender alias,
-; because C++ dispatches the Stage 200 shutdown straight after this
-; call and Reset() empties the alias.
+; because C++ ends the visit straight after this call, and EndVisit
+; empties the alias.
 Function RecordPlayerLeftAbruptly(int aiSenderFormID, String content)
     Actor senderActor = Game.GetFormEx(aiSenderFormID) as Actor
     if senderActor == None
@@ -300,4 +302,29 @@ Function RepairOrphanedFills(int aiSparedVisitId)
     if senderActor != None
         senderActor.EvaluatePackage()
     endIf
+EndFunction
+
+; -----------------------------------------------------------------
+; Actor-side release
+; -----------------------------------------------------------------
+;
+; For an actor who still carries this quest's alias record when the
+; Sender alias itself reads empty. Clear() on the alias cannot reach
+; them, because the alias no longer points at them; forcing them back
+; in and clearing again puts both sides back in step. Refused while the
+; alias holds anybody, so it can never evict a visit's own sender.
+Function ReleaseActor(int aiFormID)
+    Actor akActor = Game.GetFormEx(aiFormID) as Actor
+    if akActor == None
+        Debug.Trace("[_ne_VisitQuest] ReleaseActor: form " + aiFormID + " is not an Actor")
+        return
+    endIf
+    if Sender.GetReference() != None
+        Debug.Trace("[_ne_VisitQuest] ReleaseActor: Sender holds " + Sender.GetReference() + "; not releasing " + akActor)
+        return
+    endIf
+    Sender.ForceRefTo(akActor)
+    Sender.Clear()
+    akActor.EvaluatePackage()
+    Debug.Trace("[_ne_VisitQuest] ReleaseActor: released " + akActor)
 EndFunction

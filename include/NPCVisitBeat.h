@@ -8,6 +8,7 @@
 #include <RE/Skyrim.h>
 
 #include <optional>
+#include <string>
 
 // NPCVisitBeat — the Narrative Beat System's face-to-face social beat.
 //
@@ -100,6 +101,16 @@ namespace NarrativeEngine
         // the visit's own package for good. Deciding that no visit owns
         // what is in there is the caller's job; this does not ask.
         bool RepairStaleVisitQuest(const MainThread::Token& mt, const char* trigger);
+
+        // The idle watchdog, fed the unpaused seconds since the last poll
+        // from Tick.cpp. Every 30s it looks at the quest while no visit is
+        // in flight, releases any actor the viability filters reported as
+        // still carrying the quest's alias record, and repairs a quest it
+        // finds holding somebody on two looks in a row.
+        void Poll(const PluginThread::Token& pt, double unpausedElapsedSeconds);
+
+        // Forget the watchdog's state and the actors it was to release.
+        void OnRevert();
     } // namespace NPCVisitBeat_Repair
 
     namespace NPCVisitBeat_Testing
@@ -140,6 +151,28 @@ namespace NarrativeEngine
         };
 
         DiscussSubPhase GetDiscussSubPhase();
+
+        // Whether the visit quest holds `actor`: in its Sender alias, or by
+        // a record of that alias left on the actor after the alias itself
+        // let go. Main thread. The second kind is queued for the watchdog
+        // to release. Visit candidates are filtered on this -- the only
+        // sender the quest should hold is the current visit's, and nobody
+        // is picked while a visit is in flight.
+        bool IsHeldByVisitQuest(RE::Actor* actor);
+
+        // What the visit quest holds right now, for the dashboard and the
+        // watchdog. Main thread. `stale` is a hold with no visit in flight:
+        // a sender or anchor still in the aliases, or a stage still read.
+        struct QuestHold
+        {
+            RE::FormID senderFormID = 0;
+            std::string senderName;
+            RE::FormID anchorFormID = 0;
+            std::uint16_t stage = 0;
+            bool visitInFlight = false;
+            bool stale = false;
+        };
+        QuestHold GetQuestHold();
     } // namespace NPCVisitBeat_Query
 
     namespace NPCVisitBeat_Cooldowns
