@@ -173,3 +173,38 @@ Function Shutdown()
 
     Reset()
 EndFunction
+
+; -----------------------------------------------------------------
+; Orphan repair
+; -----------------------------------------------------------------
+;
+; Called from C++ when the aliases hold somebody no visit is running
+; for. A fill that lands after Shutdown has stopped the quest is not
+; undone by stopping it again -- the quest is already stopped -- so
+; the actor keeps the alias and both its packages. Clear() is what
+; removes them.
+;
+; The quest is stopped and reset as well when it reads as still
+; going, which is what a visit nobody is driving any more looks like.
+Function RepairOrphanedFills()
+    Actor senderActor = Sender.GetActorReference()
+    ObjectReference returnAnchorRef = ReturnAnchor.GetReference()
+    Debug.Trace("[_ne_VisitQuest] RepairOrphanedFills: Sender=" + senderActor + " ReturnAnchor=" + returnAnchorRef + " stage=" + GetStage())
+
+    Sender.Clear()
+    ReturnAnchor.Clear()
+
+    if returnAnchorRef != None
+        returnAnchorRef.DisableNoWait()
+        returnAnchorRef.Delete()
+    endIf
+
+    if IsRunning() || GetStage() != 0
+        Stop()
+        Reset()
+    endIf
+
+    if senderActor != None
+        senderActor.EvaluatePackage()
+    endIf
+EndFunction

@@ -27,6 +27,7 @@
 #include <HoldGrid.h>
 #include <LetterPool.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <MCMEventSink.h>
 #include <NPCLetterBeat.h>
 #include <NPCVisitBeat.h>
@@ -62,6 +63,29 @@ namespace NarrativeEngine
 {
     namespace
     {
+        // Square the visit quest with what the co-save says is running.
+        // Main thread, once a load has finished.
+        //
+        // The two are saved separately -- the quest and its alias fills in
+        // the save itself, the visit's state partly in the co-save and
+        // partly nowhere -- and nothing else ever compares them. A visit in
+        // flight when the save was made comes back with its sub-phase,
+        // latches and poll all reset, which leaves it unable to finish, so
+        // it is aborted rather than resumed. A quest still holding somebody
+        // with no visit running is a fill that outlived its visit, and is
+        // cleared.
+        void ReconcileVisitQuestAfterLoad(const MainThread::Token& mt)
+        {
+            // NPCVisitBeat::Name(), the key BeatSystem records the beat by.
+            if (BeatSystem::GetRunningBeatName() == "npc_visit") {
+                logger::warn("Plugin: a visit was in flight when this save was made and cannot be resumed -- "
+                             "aborting it");
+                BeatSystem::AbortRunningBeat(mt);
+                return;
+            }
+            NPCVisitBeat_Repair::RepairStaleVisitQuest(mt, "load");
+        }
+
         // One-shot presence trace for a candidate SKSE dependency DLL.
         // Uses GetModuleHandleA so it reports the actual "SKSE loaded
         // this into our process" state — not just "the file exists on
@@ -444,6 +468,13 @@ namespace NarrativeEngine
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();
+                // Queued rather than run here: the message handler holds no
+                // main-thread token, and one frame later the VM the repair
+                // dispatches into is certainly up.
+                AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                    MainThread::FireAndForget(pt,
+                                              [](const MainThread::Token& mt) { ReconcileVisitQuestAfterLoad(mt); });
+                });
                 break;
             default:
                 break;

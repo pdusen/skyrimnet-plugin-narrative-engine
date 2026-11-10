@@ -79,6 +79,21 @@ namespace NarrativeEngine
         void Initialize();
     } // namespace NPCVisitBeat_Init
 
+    namespace NPCVisitBeat_Repair
+    {
+        // Empty the visit quest when it holds somebody no visit is running
+        // for: send them home to the anchor the quest still holds, and have
+        // the quest script clear both aliases, delete that anchor, and stop
+        // the quest if it still reads a stage. Returns whether there was
+        // anything to clear.
+        //
+        // A fill that lands after the quest has shut down survives every
+        // later shutdown, and leaves its actor following the player under
+        // the visit's own package for good. Deciding that no visit owns
+        // what is in there is the caller's job; this does not ask.
+        bool RepairStaleVisitQuest(const MainThread::Token& mt, const char* trigger);
+    } // namespace NPCVisitBeat_Repair
+
     namespace NPCVisitBeat_Testing
     {
         // Replace the wall clock the beat measures its own timers

@@ -584,6 +584,95 @@ namespace NarrativeEngine
             senderActor->data.angle.z = snap.returnAngleZ;
         }
 
+        // ---- Stale-fill repair -------------------------------------
+
+        // Empty the visit quest of whatever is left in it. Main thread.
+        //
+        // A fill that lands after the quest has been shut down is not undone
+        // by shutting it down again: the quest is already stopped, and the
+        // actor keeps the alias and both its packages. Nothing in C++ can
+        // clear an alias, so the clearing is the quest script's, and this
+        // sends the actor home first, while the anchor it is sent to still
+        // exists -- the script deletes it.
+        //
+        // The caller has already decided that nothing in there belongs to a
+        // visit in flight; this only acts on it. A quest still reading a
+        // stage is a visit nobody is driving any more, which counts as
+        // stale too where `stageCounts` says it can.
+        bool RepairStaleFills(const char* trigger, bool stageCounts)
+        {
+            if (!g_visitQuest) {
+                return false;
+            }
+            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+            auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
+            const auto stage = g_visitQuest->GetCurrentStageID();
+            if (!senderRef && !anchorRef && (!stageCounts || stage == 0)) {
+                return false;
+            }
+            logger::warn("NPCVisitBeat[REPAIR/{}]: the visit quest still holds sender=0x{:08X} anchor=0x{:08X} at "
+                         "stage {} with no visit running for them -- clearing it",
+                         trigger,
+                         senderRef ? senderRef->GetFormID() : 0u,
+                         anchorRef ? anchorRef->GetFormID() : 0u,
+                         stage);
+            auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+            if (senderActor && !senderActor->IsDead() && anchorRef) {
+                senderActor->MoveTo(anchorRef);
+                logger::info("NPCVisitBeat[REPAIR/{}]: sent 0x{:08X} home to anchor 0x{:08X}",
+                             trigger,
+                             senderActor->GetFormID(),
+                             anchorRef->GetFormID());
+            }
+            if (!QuestUtils::VMDispatchOnQuest(g_visitQuest, kQuestScriptName, "RepairOrphanedFills")) {
+                logger::error(
+                    "NPCVisitBeat[REPAIR/{}]: could not queue RepairOrphanedFills on '{}'", trigger, kQuestScriptName);
+            }
+            if (senderActor) {
+                const char* name = senderActor->GetDisplayFullName();
+                DebugNotify::Post(
+                    std::format("[NE] Released {} from a visit that never ended", (name && *name) ? name : "someone"));
+            }
+            return true;
+        }
+
+        // The sender this visit was dispatched for: the composed snapshot's
+        // once the briefing has landed, the Director's pick before that.
+        RE::FormID ExpectedSenderFormID()
+        {
+            if (const auto id = VisitState::GetSnapshot().senderFormID; id != 0) {
+                return id;
+            }
+            std::scoped_lock lock(g_sessionMutex);
+            return g_paramSenderFormID;
+        }
+
+        // Who the Sender alias holds, if that is the sender this visit was
+        // dispatched for, or null. Main thread.
+        //
+        // Every teardown used to send home whoever the alias held. A fill
+        // left over from an earlier visit puts somebody else in there, and
+        // then each abort teleported that stranger: in one report, aborts of
+        // three different visits all sent the same NPC home. Anybody but this
+        // visit's sender is a leftover, and goes to the stale-fill repair.
+        RE::Actor* AliasSenderForThisVisit(const char* tag)
+        {
+            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+            if (!senderRef) {
+                return nullptr;
+            }
+            const auto expected = ExpectedSenderFormID();
+            if (senderRef->GetFormID() != expected) {
+                logger::warn("NPCVisitBeat[{}]: the Sender alias holds 0x{:08X}, not this visit's sender 0x{:08X}",
+                             tag,
+                             senderRef->GetFormID(),
+                             expected);
+                RepairStaleFills(tag, /*stageCounts=*/false);
+                return nullptr;
+            }
+            return senderRef->As<RE::Actor>();
+        }
+
         // ---- Hard-abort helper -------------------------------------
 
         void HardAbortVisit(const char* reason);
@@ -816,8 +905,7 @@ namespace NarrativeEngine
         // cooldown is stamped. Runs on the main thread.
         void RollBackVisit(const char* tag)
         {
-            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-            auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+            auto* senderActor = AliasSenderForThisVisit(tag);
             if (senderActor) {
                 SendSenderHome(senderActor, tag);
             }
@@ -936,8 +1024,7 @@ namespace NarrativeEngine
             VisitConclusionPoll::Disarm();
             g_onHoldCombatStartedAtCombatSec.store(0.0);
 
-            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-            auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+            auto* senderActor = AliasSenderForThisVisit("HARD-ABORT");
 
             if (senderActor && !senderActor->IsDead()) {
                 SendSenderHome(senderActor, "HARD-ABORT");
@@ -1153,8 +1240,7 @@ namespace NarrativeEngine
             logger::info("NPCVisitBeat[RETURNHOME]: exit condition tripped ({}) — running "
                          "shutdown chain",
                          triggerReason);
-            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-            auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+            auto* senderActor = AliasSenderForThisVisit("RETURNHOME");
             if (senderActor && !senderActor->IsDead()) {
                 // Was a MoveTo onto the sender's own reference when the
                 // anchor was missing, which moves nobody anywhere.
@@ -2465,6 +2551,12 @@ namespace NarrativeEngine
             }
             switch (sub) {
             case ComposeSubPhase::Start:
+                // This visit has filled nothing yet, so anything in the
+                // aliases now is left over from one that never let go. The
+                // compose call ahead takes seconds, which gives the
+                // clearing time to land before this visit's own fills do.
+                MainThread::Run(
+                    pt, [](const MainThread::Token&) { return RepairStaleFills("dispatch", /*stageCounts=*/false); });
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
                 FireComposeLLM();
                 return {};
@@ -2572,6 +2664,14 @@ namespace NarrativeEngine
     // ---------------------------------------------------------------
     // Query surface
     // ---------------------------------------------------------------
+
+    namespace NPCVisitBeat_Repair
+    {
+        bool RepairStaleVisitQuest(const MainThread::Token& /*mt*/, const char* trigger)
+        {
+            return RepairStaleFills(trigger, /*stageCounts=*/true);
+        }
+    } // namespace NPCVisitBeat_Repair
 
     namespace NPCVisitBeat_Testing
     {

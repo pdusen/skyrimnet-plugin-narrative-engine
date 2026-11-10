@@ -551,7 +551,21 @@ bool RE::BSScript::IVirtualMachine::DispatchMethodCall(
         (*a_args)(packed);
     }
 
+    if (mock->papyrus.onDispatch && mock->papyrus.dispatchSucceeds) {
+        // A copy, because the hook may dispatch again and grow the log.
+        const auto sent = mock->papyrus.dispatches.back();
+        mock->papyrus.onDispatch(sent);
+    }
+
     return mock->papyrus.dispatchSucceeds;
+}
+
+// What `MakeFunctionArguments()` hands back for a call with no arguments. The
+// real body empties the destination array; there is nothing to record.
+bool RE::BSScript::ZeroFunctionArguments::operator()(RE::BSScrapArray<RE::BSScript::Variable>& a_dst) const
+{
+    (void)a_dst;
+    return true;
 }
 
 // Argument packing. `MakeFunctionArguments` builds a scrap-allocated array of
