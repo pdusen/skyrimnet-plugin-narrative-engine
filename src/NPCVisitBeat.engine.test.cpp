@@ -2738,3 +2738,100 @@ TEST_CASE("NPCVisitBeat keeps candidates out of a quest that still holds them", 
         }
     }
 }
+
+TEST_CASE("NPCVisitBeat calls a visitor stuck only when they are", "[NPCVisitBeat][engine]")
+{
+    // The dashboard offers Release Stuck Visitor on this alone, and a player
+    // shown it for a visitor who simply has not left yet will press it. So it
+    // takes an actual NPC in the Sender alias, no visit running, and long
+    // enough since the last visit ended that its teardown cannot still be
+    // landing.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    auto* stranger = engine.AddActor(kOtherSender);
+
+    // Unpaused play, as Tick.cpp feeds it; under 30s, so the watchdog does
+    // not run and repair what the case is looking at.
+    const auto play = [](double seconds) {
+        PluginThread::detail::JobDispatcher::Invoke(
+            [&](const PluginThread::Token& pt) { NarrativeEngine::NPCVisitBeat_Repair::Poll(pt, seconds); });
+    };
+    const auto stuck = [] {
+        bool result = false;
+        PluginThread::detail::JobDispatcher::Invoke([&](const PluginThread::Token& pt) {
+            result = NarrativeEngine::MainThread::Run(
+                pt, [](const NarrativeEngine::MainThread::Token&) { return Query::GetQuestHold().stuckVisitor; });
+        });
+        return result;
+    };
+
+    SECTION("when an NPC is left in the quest with no visit running")
+    {
+        engine.FillRefAlias(world.quest.aliases.at(0), stranger);
+
+        SECTION("should call them stuck once there has been time for any teardown to land")
+        {
+            play(11.0);
+            REQUIRE(stuck());
+        }
+
+        SECTION("should not call them stuck straight away")
+        {
+            play(5.0);
+            REQUIRE_FALSE(stuck());
+        }
+    }
+
+    SECTION("when only the anchor is left")
+    {
+        engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+        play(11.0);
+
+        SECTION("should not call anybody stuck, since there is no visitor")
+        {
+            REQUIRE_FALSE(stuck());
+        }
+    }
+
+    SECTION("when a visit is in progress")
+    {
+        NPCVisitBeat beat;
+        FillAliasesOnDispatch(engine, world);
+        ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
+        // Well past the grace. The watchdog looks in along the way, and
+        // leaves a visit in flight alone.
+        play(20.0);
+        play(20.0);
+
+        SECTION("should never call its visitor stuck, however long they stay")
+        {
+            REQUIRE_FALSE(stuck());
+        }
+
+        SECTION("and it has just been aborted")
+        {
+            AbortFromMainThread(beat);
+            // The harness never runs the teardown, so the sender is still in
+            // the alias -- which is what the game looks like until it lands.
+            REQUIRE(world.quest.aliases.at(0)->GetReference() == world.sender);
+
+            SECTION("should give the teardown time to land first")
+            {
+                play(5.0);
+                REQUIRE_FALSE(stuck());
+            }
+
+            SECTION("should call them stuck if it never does")
+            {
+                play(11.0);
+                REQUIRE(stuck());
+            }
+        }
+    }
+}

@@ -161,8 +161,15 @@ namespace NarrativeEngine
         bool IsHeldByVisitQuest(RE::Actor* actor);
 
         // What the visit quest holds right now, for the dashboard and the
-        // watchdog. Main thread. `stale` is a hold with no visit in flight:
-        // a sender or anchor still in the aliases, or a stage still read.
+        // watchdog. Main thread.
+        //
+        // `stale` is anything left with no visit in flight -- a sender or
+        // anchor still in the aliases, or a stage still read -- and is what
+        // the watchdog repairs. `stuckVisitor` is the narrower thing a
+        // player is told about: an actual NPC in the Sender alias, no visit
+        // in flight, and that true for 10s of unpaused play since a visit
+        // last ended or a repair was last sent in, so a teardown still
+        // landing is never shown as a stuck visitor.
         struct QuestHold
         {
             RE::FormID senderFormID = 0;
@@ -171,6 +178,7 @@ namespace NarrativeEngine
             std::uint16_t stage = 0;
             bool visitInFlight = false;
             bool stale = false;
+            bool stuckVisitor = false;
         };
         QuestHold GetQuestHold();
     } // namespace NPCVisitBeat_Query

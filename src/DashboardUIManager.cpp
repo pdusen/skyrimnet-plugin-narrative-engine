@@ -735,17 +735,20 @@ namespace NarrativeEngine::DashboardUIManager
         // Backs the Dispatch tab's Abort button (after confirmation).
         // No-ops backend-side if no beat is in flight.
         // Backs the Dispatch tab's Release Stuck Visitor button, which is
-        // live only while the visit quest holds somebody with no visit in
-        // flight. A visit that IS in flight is the Abort button's business.
+        // shown only while a stuck visitor is detected. Checked again here
+        // rather than trusted from the page, which may be showing a push
+        // from before the visit was torn down: a visit still in flight, or
+        // one whose teardown is still landing, is left alone.
         void OnReleaseStuckVisitor(const char* /*argument*/)
         {
             logger::info("DashboardUIManager: ne_releaseStuckVisitor received");
             AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
                 MainThread::FireAndForget(pt, [](const MainThread::Token& mt) {
-                    if (BeatSystem::GetRunningBeatName() == "npc_visit") {
-                        logger::info("DashboardUIManager: a visit is in flight -- leaving it to Abort");
-                    } else if (!NPCVisitBeat_Repair::RepairStaleVisitQuest(mt, "dashboard")) {
-                        logger::info("DashboardUIManager: the visit quest holds nobody -- nothing to release");
+                    const auto hold = NPCVisitBeat_Query::GetQuestHold();
+                    if (BeatSystem::GetRunningBeatName() == "npc_visit" || !hold.stuckVisitor) {
+                        logger::info("DashboardUIManager: no stuck visitor detected -- nothing to release");
+                    } else {
+                        NPCVisitBeat_Repair::RepairStaleVisitQuest(mt, "dashboard");
                     }
                     PushFullState();
                 });
@@ -1494,7 +1497,7 @@ namespace NarrativeEngine::DashboardUIManager
                      {"sender_name", reads.visitHoldSenderName},
                      {"anchor_form_id", reads.visitHoldAnchorFormID},
                      {"stage", reads.visitHoldStage},
-                     {"stale", reads.visitHoldStale},
+                     {"stuck", reads.visitHoldStuck},
                  }},
             };
         }
@@ -1728,7 +1731,10 @@ namespace NarrativeEngine::DashboardUIManager
                 reads.visitHoldSenderName = hold.senderName;
                 reads.visitHoldAnchorFormID = hold.anchorFormID;
                 reads.visitHoldStage = hold.stage;
-                reads.visitHoldStale = hold.stale;
+                // The beat system's own record as well as the beat's: a
+                // visit restored from a save reads as not in flight until
+                // the load-time check has aborted it.
+                reads.visitHoldStuck = hold.stuckVisitor && BeatSystem::GetRunningBeatName() != "npc_visit";
                 return 0;
             });
             if (auto* cal = RE::Calendar::GetSingleton()) {

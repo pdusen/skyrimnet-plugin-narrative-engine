@@ -89,23 +89,19 @@ export function VisitTab({ visit, timers, nowSeconds }: Props): ReactNode {
     );
 }
 
-// Shown only when the visit quest holds somebody with no visit running.
-// That state is invisible everywhere else on the dashboard, and the NPC
-// in it follows the player around until it is cleared.
+// Shown only when the plugin has detected a stuck visitor: an NPC still
+// held by the visit quest after their visit is over. A visit in progress
+// never shows it -- that one is ended with Abort Running Beat.
 function StuckVisitorPanel({ hold }: { hold: VisitQuestHold | undefined }): ReactNode {
-    if (!hold || !hold.stale) {
+    if (!hold || !hold.stuck) {
         return null;
     }
-    const who = hold.sender_name
-        || (hold.sender_form_id !== 0 ? `0x${hold.sender_form_id.toString(16).toUpperCase()}` : '');
-    const what = who
-        ? `The visit quest still holds ${who}, with no visit running. They may be following you.`
-        : `The visit quest still reads stage ${hold.stage}, with no visit running.`;
+    const who = hold.sender_name || `0x${hold.sender_form_id.toString(16).toUpperCase()}`;
     return (
         <section className="panel">
             <h3>Stuck Visitor</h3>
             <p className="empty-state">
-                {`${what} Release Stuck Visitor on the Dispatch tab clears it now; the plugin also clears it on its own within a minute.`}
+                {`${who}'s visit is over, but the visit quest still holds them, so they may keep following you. Release Stuck Visitor on the Dispatch tab frees them now; the plugin also frees them on its own within a minute.`}
             </p>
         </section>
     );

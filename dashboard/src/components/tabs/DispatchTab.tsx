@@ -63,8 +63,11 @@ export function DispatchTab({ state, nowSeconds }: Props) {
         setConfirmOpen(false);
     };
     const onCancelAbort = () => setConfirmOpen(false);
-    // Live only while the visit quest holds somebody no visit is running for.
-    const stuckHold = state.visit.quest_hold?.stale ? state.visit.quest_hold : null;
+    // Shown only while the plugin detects a stuck visitor. Never alongside
+    // a running visit, which is Abort Running Beat's to end -- a visitor
+    // who has not chosen to leave yet is not stuck.
+    const stuckHold =
+        state.visit.quest_hold?.stuck && inFlightName !== 'npc_visit' ? state.visit.quest_hold : null;
     const onReleaseStuck = () => {
         window.ne_releaseStuckVisitor?.('');
     };
@@ -116,17 +119,16 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                 >
                     Abort Running Beat
                 </button>
-                <button
-                    type="button"
-                    className="bulk-button"
-                    disabled={!stuckHold}
-                    onClick={onReleaseStuck}
-                    title={stuckHold
-                        ? `Release ${stuckHold.sender_name || 'the NPC'} from the visit quest, which still holds them with no visit running`
-                        : 'The visit quest holds nobody.'}
-                >
-                    Release Stuck Visitor
-                </button>
+                {stuckHold && (
+                    <button
+                        type="button"
+                        className="bulk-button"
+                        onClick={onReleaseStuck}
+                        title={`${stuckHold.sender_name || 'This NPC'}'s visit is over, but the visit quest still holds them. Release them.`}
+                    >
+                        Release Stuck Visitor
+                    </button>
+                )}
             </section>
             <section className="panel action-dispatch">
                 <h2>Actions</h2>

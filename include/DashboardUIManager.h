@@ -33,13 +33,14 @@ namespace NarrativeEngine::DashboardUIManager
         // entries fall back to 0.0 in the JSON.
         std::unordered_map<std::string, double> beatCooldownHours;
         // What the visit quest holds, read on the main thread because the
-        // aliases are engine state. `visitHoldStale` is a hold with no visit
-        // in flight -- somebody a fill outlived, following the player.
+        // aliases are engine state. `visitHoldStuck` is NPCVisitBeat's
+        // `stuckVisitor` with no visit beat running either: an NPC a fill
+        // outlived, following the player, and nothing else.
         std::uint32_t visitHoldSenderFormID = 0;
         std::string visitHoldSenderName;
         std::uint32_t visitHoldAnchorFormID = 0;
         std::uint16_t visitHoldStage = 0;
-        bool visitHoldStale = false;
+        bool visitHoldStuck = false;
     };
 
     // Create the PrismaUI view and register the hotkey input sink. Call once

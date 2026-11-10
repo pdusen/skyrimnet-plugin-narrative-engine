@@ -325,6 +325,23 @@ namespace NarrativeEngine
         // down on the plugin thread, from the completion callback's hop.
         std::atomic<int> g_pendingFills = 0;
 
+        // Unpaused seconds since the visit quest was last expected to change
+        // on its own: a visit ending, or a repair being sent in. Fed by the
+        // watchdog's poll from Tick.cpp, which only runs unpaused.
+        //
+        // An NPC is called stuck only once this passes kStuckGraceSeconds.
+        // Before that, what the aliases hold may be a teardown still on its
+        // way -- and the dashboard pauses the game while it is open, so an
+        // abort clicked there cannot land until it closes. Counting paused
+        // time would show the player a stuck visitor every time.
+        std::atomic<double> g_unpausedSinceSettledSec = 0.0;
+        constexpr double kStuckGraceSeconds = 10.0;
+
+        void RestartSettleClock()
+        {
+            g_unpausedSinceSettledSec.store(0.0, std::memory_order_release);
+        }
+
         // Set once the warp has moved this visit's sender. From then on they
         // stand at the arrival point whether or not their fill has landed,
         // and every teardown has to send them home.
@@ -739,6 +756,7 @@ namespace NarrativeEngine
                              anchorRef->GetFormID());
             }
             const auto spared = spareThisVisit ? g_visitId.load(std::memory_order_acquire) : 0u;
+            RestartSettleClock();
             if (!QuestUtils::VMDispatchOnQuest(
                     g_visitQuest, kQuestScriptName, "RepairOrphanedFills", static_cast<std::int32_t>(spared))) {
                 logger::error(
@@ -2850,6 +2868,7 @@ namespace NarrativeEngine
                 VisitState::Reset();
                 VisitState::SetComposingSender(false);
                 g_visitInFlight.store(false, std::memory_order_release);
+                RestartSettleClock();
                 return TickResult{BeatState::NOT_RUNNING};
             };
             if (!g_visitQuest) {
@@ -2918,6 +2937,7 @@ namespace NarrativeEngine
         VisitState::Reset();
         VisitState::SetComposingSender(false);
         g_visitInFlight.store(false, std::memory_order_release);
+        RestartSettleClock();
     }
 
     // ---------------------------------------------------------------
@@ -3007,6 +3027,7 @@ namespace NarrativeEngine
 
         void Poll(const PluginThread::Token& pt, double unpausedElapsedSeconds)
         {
+            g_unpausedSinceSettledSec.fetch_add(unpausedElapsedSeconds, std::memory_order_acq_rel);
             g_watchdogElapsedSec += unpausedElapsedSeconds;
             if (g_watchdogElapsedSec < kWatchdogIntervalSeconds) {
                 return;
@@ -3023,6 +3044,7 @@ namespace NarrativeEngine
 
         void OnRevert()
         {
+            RestartSettleClock();
             g_watchdogElapsedSec = 0.0;
             g_watchdogSawStale = false;
             std::scoped_lock lock(g_divergentMutex);
@@ -3103,6 +3125,8 @@ namespace NarrativeEngine
             hold.stage = g_visitQuest->GetCurrentStageID();
             hold.visitInFlight = g_visitInFlight.load(std::memory_order_acquire);
             hold.stale = !hold.visitInFlight && (senderRef || anchorRef || hold.stage != 0);
+            hold.stuckVisitor = !hold.visitInFlight && senderRef && senderRef->As<RE::Actor>()
+                                && g_unpausedSinceSettledSec.load(std::memory_order_acquire) >= kStuckGraceSeconds;
             return hold;
         }
 

@@ -230,14 +230,16 @@ export interface VisitHistoryEntry {
 }
 
 // What the visit quest itself holds, which is not always what `current`
-// says. `stale` is a hold with no visit in flight: an NPC whose fill
-// outlived their visit, still under its Follow package.
+// says. `stuck` is set only for an NPC in the quest's Sender alias with no
+// visit running, and that true for 10s of unpaused play since a visit last
+// ended -- so a visitor who simply has not left yet, or one whose abort is
+// still landing, never reads as stuck.
 export interface VisitQuestHold {
     sender_form_id: number;
     sender_name: string;
     anchor_form_id: number;
     stage: number;
-    stale: boolean;
+    stuck: boolean;
 }
 
 export interface VisitTabState {
