@@ -73,6 +73,7 @@ namespace NarrativeEngine::DebugNotify
             constexpr std::array kAmbushParams{Param{"group", Kind::Text}, Param{"attackers", Kind::Number}};
             constexpr Key kCourier{"Notify", "courier", {}};
             constexpr Key kVisitor{"Notify", "visitor", kVisitorParams};
+            constexpr Key kReleased{"Notify", "released", kVisitorParams};
             constexpr Key kRumor{"Notify", "rumor", kRumorParams};
             constexpr Key kAmbush{"Notify", "ambush", kAmbushParams};
             constexpr Key kUnknownVisitor{"Notify", "unknown.visitor", {}};
@@ -88,8 +89,15 @@ namespace NarrativeEngine::DebugNotify
 
         const std::vector<TextKeys::Key>& Keys()
         {
-            static const std::vector<Key> keys{
-                kCourier, kVisitor, kRumor, kAmbush, kUnknownVisitor, kUnknownPerson, kUnknownGroup, kFontSample};
+            static const std::vector<Key> keys{kCourier,
+                                               kVisitor,
+                                               kReleased,
+                                               kRumor,
+                                               kAmbush,
+                                               kUnknownVisitor,
+                                               kUnknownPerson,
+                                               kUnknownGroup,
+                                               kFontSample};
             return keys;
         }
 
@@ -102,6 +110,13 @@ namespace NarrativeEngine::DebugNotify
         {
             return table.Render(
                 kVisitor,
+                TextTemplate::Arguments{}.Set("visitor", TextTemplate::Person{Or(table, name, kUnknownVisitor)}));
+        }
+
+        std::string VisitorReleased(const LanguageTable::Table& table, std::string_view name)
+        {
+            return table.Render(
+                kReleased,
                 TextTemplate::Arguments{}.Set("visitor", TextTemplate::Person{Or(table, name, kUnknownVisitor)}));
         }
 

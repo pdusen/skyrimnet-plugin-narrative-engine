@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { t } from '../../i18n/strings';
-import type { VisitMode, VisitOutcome, VisitTabState, VisitTimers } from '../../types';
+import type { VisitMode, VisitOutcome, VisitQuestHold, VisitTabState, VisitTimers } from '../../types';
 import { TimerPanel, TimerRow } from '../TimerPanel';
 
 interface Props {
@@ -69,10 +69,27 @@ export function VisitTab({ visit, timers, nowSeconds }: Props): ReactNode {
                     </div>
                 )}
             </TimerPanel>
+            <StuckVisitorPanel hold={visit.quest_hold} />
             <CurrentConversationPanel visit={visit} nowSeconds={nowSeconds} />
             <RecentPollsPanel verdicts={visit.recent_verdicts} nowSeconds={nowSeconds} />
             <VisitHistoryPanel history={visit.history} nowSeconds={nowSeconds} />
         </div>
+    );
+}
+
+// Shown only when the plugin has detected a stuck visitor: an NPC still
+// held by the visit quest after their visit is over. A visit in progress
+// never shows it -- that one is ended with Abort Running Beat.
+function StuckVisitorPanel({ hold }: { hold: VisitQuestHold | undefined }): ReactNode {
+    if (!hold || !hold.stuck) {
+        return null;
+    }
+    const who = hold.sender_name || `0x${hold.sender_form_id.toString(16).toUpperCase()}`;
+    return (
+        <section className="panel">
+            <h3>{t('visit.stuck')}</h3>
+            <p className="empty-state">{t('visit.stuck.body', { who })}</p>
+        </section>
     );
 }
 

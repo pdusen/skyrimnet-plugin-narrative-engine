@@ -62,6 +62,8 @@ namespace NarrativeEngine::DebugNotify
         [[nodiscard]] std::string CourierHasLetter(const LanguageTable::Table& table);
         // `name` empty reads as a fallback, as it does in each of these.
         [[nodiscard]] std::string VisitorComing(const LanguageTable::Table& table, std::string_view name);
+        // A visitor the visit quest still held after their visit ended, let go.
+        [[nodiscard]] std::string VisitorReleased(const LanguageTable::Table& table, std::string_view name);
         [[nodiscard]] std::string RumorSpreading(const LanguageTable::Table& table, std::string_view origin);
         [[nodiscard]] std::string AmbushSpawned(const LanguageTable::Table& table,
                                                 std::string_view group,

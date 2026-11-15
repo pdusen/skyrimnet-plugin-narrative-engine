@@ -9,6 +9,17 @@ ScheduleMinute: -1
 Unknown3: 0x000000
 Conditions:
 - MutagenObjectType: ConditionFloat
+  Data:
+    MutagenObjectType: GetQuestRunningConditionData
+    Quest: 00082D:NarrativeEngine.esp
+  ComparisonValue: 1
+- MutagenObjectType: ConditionFloat
+  CompareOperator: GreaterThanOrEqualTo
+  Data:
+    MutagenObjectType: GetStageConditionData
+    Quest: 00082D:NarrativeEngine.esp
+  ComparisonValue: 10
+- MutagenObjectType: ConditionFloat
   CompareOperator: LessThan
   Data:
     MutagenObjectType: GetStageConditionData

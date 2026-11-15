@@ -161,6 +161,10 @@ TEST_CASE("DebugNotify words each notice the way it always has", "[DebugNotify][
     CHECK(DebugNotify::Text::CourierHasLetter(ShippedEnglish()) == "[NE] The courier has a letter for you");
     CHECK(DebugNotify::Text::VisitorComing(ShippedEnglish(), "Ysolda") == "[NE] Ysolda is coming to see you");
     CHECK(DebugNotify::Text::VisitorComing(ShippedEnglish(), "") == "[NE] Someone is coming to see you");
+    CHECK(DebugNotify::Text::VisitorReleased(ShippedEnglish(), "Ysolda")
+          == "[NE] Ysolda was released from a visit that never ended");
+    CHECK(DebugNotify::Text::VisitorReleased(ShippedEnglish(), "")
+          == "[NE] Someone was released from a visit that never ended");
     CHECK(DebugNotify::Text::RumorSpreading(ShippedEnglish(), "Faralda") == "[NE] New rumor spreading from Faralda");
     CHECK(DebugNotify::Text::RumorSpreading(ShippedEnglish(), "") == "[NE] New rumor spreading from someone");
     CHECK(DebugNotify::Text::AmbushSpawned(ShippedEnglish(), "bandits", 4)

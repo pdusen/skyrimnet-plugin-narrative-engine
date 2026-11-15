@@ -277,10 +277,25 @@ export interface VisitHistoryEntry {
     duration_seconds: number;
 }
 
+// What the visit quest itself holds, which is not always what `current`
+// says. `stuck` is set only for an NPC in the quest's Sender alias with no
+// visit running, and that true for 10s of unpaused play since a visit last
+// ended -- so a visitor who simply has not left yet, or one whose abort is
+// still landing, never reads as stuck.
+export interface VisitQuestHold {
+    sender_form_id: number;
+    sender_name: string;
+    anchor_form_id: number;
+    stage: number;
+    stuck: boolean;
+}
+
 export interface VisitTabState {
     current: VisitCurrent | null;
     recent_verdicts: VisitVerdict[];
     history: VisitHistoryEntry[];
+    // Optional so a payload from before it existed still renders.
+    quest_hold?: VisitQuestHold;
 }
 
 // One entry per action registered with ActionRegistry. The C++ side

@@ -9,6 +9,7 @@
 #include <FineRoads.h>
 #include <GossipTick.h>
 #include <logger.h>
+#include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PlotTick.h>
 #include <PluginThread.h>
@@ -92,6 +93,10 @@ namespace NarrativeEngine::Tick
             // real-seconds accumulator, and nothing to pause-correct —
             // a paused game does not advance the game clock.
             PlotTick::Poll(pt);
+            // The visit quest's idle watchdog: a fill that outlived its
+            // visit gets cleared within a minute rather than at the next
+            // load or visit.
+            NPCVisitBeat_Repair::Poll(pt, elapsedSec);
 
             // Consume the elapsed sample above so a subsequent
             // re-enable doesn't credit disabled time.

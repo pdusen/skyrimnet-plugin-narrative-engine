@@ -79,6 +79,16 @@ namespace NarrativeEngine::VisitComposer
                 return false;
             }
 
+            // Not somebody the visit quest still holds. Nobody is picked
+            // while a visit is in flight, so a sender in there now is one
+            // a fill outlived, already following the player under the
+            // visit's package.
+            if (NPCVisitBeat_Query::IsHeldByVisitQuest(actor)) {
+                if (skipReasonOut)
+                    *skipReasonOut = "held-by-visit-quest";
+                return false;
+            }
+
             // Not the player's active follower — a follower can't
             // "arrive to talk"; they're already there.
             if (actor->IsPlayerTeammate()) {

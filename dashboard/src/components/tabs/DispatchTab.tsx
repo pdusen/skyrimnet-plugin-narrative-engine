@@ -14,6 +14,7 @@ declare global {
         ne_setTickEnabled?:       (arg: string) => void;
         ne_setAllActionsEnabled?: (arg: string) => void;
         ne_abortRunningBeat?:     (arg: string) => void;
+        ne_releaseStuckVisitor?:  (arg: string) => void;
     }
 }
 
@@ -58,6 +59,14 @@ export function DispatchTab({ state, nowSeconds }: Props) {
         setConfirmOpen(false);
     };
     const onCancelAbort = () => setConfirmOpen(false);
+    // Shown only while the plugin detects a stuck visitor. Never alongside
+    // a running visit, which is Abort Running Beat's to end -- a visitor
+    // who has not chosen to leave yet is not stuck.
+    const stuckHold =
+        state.visit.quest_hold?.stuck && inFlightName !== 'npc_visit' ? state.visit.quest_hold : null;
+    const onReleaseStuck = () => {
+        window.ne_releaseStuckVisitor?.('');
+    };
     // The two gates that apply to the table as a whole, as opposed to the
     // per-beat cooldown in its own column.
     const gates = state.timers.director;
@@ -104,6 +113,18 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                 >
                     {t('dispatch.abort')}
                 </button>
+                {stuckHold && (
+                    <button
+                        type="button"
+                        className="bulk-button"
+                        onClick={onReleaseStuck}
+                        title={t('dispatch.release_stuck.title', {
+                            who: stuckHold.sender_name || `0x${stuckHold.sender_form_id.toString(16).toUpperCase()}`,
+                        })}
+                    >
+                        {t('dispatch.release_stuck')}
+                    </button>
+                )}
             </section>
             <section className="panel action-dispatch">
                 <h2>{t('dispatch.actions')}</h2>

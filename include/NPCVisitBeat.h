@@ -8,6 +8,7 @@
 #include <RE/Skyrim.h>
 
 #include <optional>
+#include <string>
 
 // NPCVisitBeat — the Narrative Beat System's face-to-face social beat.
 //
@@ -52,9 +53,17 @@
 //             A fast travel rolls the visit back before the opening line,
 //             and after it records the walk-out silently and aborts.
 //   CLEANUP — send the sender home if alive (to the return anchor, or
-//             to the snapshotted position when there is none), dispatch
-//             the Shutdown fragment, wait for the quest to drop to
-//             Stage 0, then return to NOT_RUNNING.
+//             to the snapshotted position when there is none), end the
+//             visit in the quest script and dispatch the Shutdown
+//             fragment, wait for both aliases to empty and the quest to
+//             drop to Stage 0, then return to NOT_RUNNING. A quest that
+//             never comes to rest gets the stale-fill repair after ~10s.
+//
+// Every call that fills or empties the aliases carries the visit's id,
+// and the quest script refuses a fill for a visit it has been told is
+// over. The VM runs separately-queued calls in no promised order, and a
+// fill landing after its visit's shutdown used to leave the actor in the
+// alias of a stopped quest for good.
 namespace NarrativeEngine
 {
     class NPCVisitBeat : public IBeat
@@ -77,6 +86,31 @@ namespace NarrativeEngine
         // after Settings::Load.
         void Initialize();
     } // namespace NPCVisitBeat_Init
+
+    namespace NPCVisitBeat_Repair
+    {
+        // Empty the visit quest when it holds somebody no visit is running
+        // for: send them home to the anchor the quest still holds, and have
+        // the quest script clear both aliases, delete that anchor, and stop
+        // the quest if it still reads a stage. Returns whether there was
+        // anything to clear.
+        //
+        // A fill that lands after the quest has shut down survives every
+        // later shutdown, and leaves its actor following the player under
+        // the visit's own package for good. Deciding that no visit owns
+        // what is in there is the caller's job; this does not ask.
+        bool RepairStaleVisitQuest(const MainThread::Token& mt, const char* trigger);
+
+        // The idle watchdog, fed the unpaused seconds since the last poll
+        // from Tick.cpp. Every 30s it looks at the quest while no visit is
+        // in flight, releases any actor the viability filters reported as
+        // still carrying the quest's alias record, and repairs a quest it
+        // finds holding somebody on two looks in a row.
+        void Poll(const PluginThread::Token& pt, double unpausedElapsedSeconds);
+
+        // Forget the watchdog's state and the actors it was to release.
+        void OnRevert();
+    } // namespace NPCVisitBeat_Repair
 
     namespace NPCVisitBeat_Testing
     {
@@ -116,6 +150,36 @@ namespace NarrativeEngine
         };
 
         DiscussSubPhase GetDiscussSubPhase();
+
+        // Whether the visit quest holds `actor`: in its Sender alias, or by
+        // a record of that alias left on the actor after the alias itself
+        // let go. Main thread. The second kind is queued for the watchdog
+        // to release. Visit candidates are filtered on this -- the only
+        // sender the quest should hold is the current visit's, and nobody
+        // is picked while a visit is in flight.
+        bool IsHeldByVisitQuest(RE::Actor* actor);
+
+        // What the visit quest holds right now, for the dashboard and the
+        // watchdog. Main thread.
+        //
+        // `stale` is anything left with no visit in flight -- a sender or
+        // anchor still in the aliases, or a stage still read -- and is what
+        // the watchdog repairs. `stuckVisitor` is the narrower thing a
+        // player is told about: an actual NPC in the Sender alias, no visit
+        // in flight, and that true for 10s of unpaused play since a visit
+        // last ended or a repair was last sent in, so a teardown still
+        // landing is never shown as a stuck visitor.
+        struct QuestHold
+        {
+            RE::FormID senderFormID = 0;
+            std::string senderName;
+            RE::FormID anchorFormID = 0;
+            std::uint16_t stage = 0;
+            bool visitInFlight = false;
+            bool stale = false;
+            bool stuckVisitor = false;
+        };
+        QuestHold GetQuestHold();
     } // namespace NPCVisitBeat_Query
 
     namespace NPCVisitBeat_Cooldowns

@@ -1,11 +1,16 @@
-# package.ps1 — build + zip the deployed mod folder into an MO2-compatible archive.
+# package.ps1 — build + zip the build's staging folder into an MO2-compatible archive.
 #
-# Runs build.ps1 first so the mod folder under $SKYRIM_MODS_FOLDER/NarrativeEngine/
-# reflects the current source (compiled DLL, dashboard bundle, statics deploy,
-# compiled Papyrus, ESP sync — everything build.ps1 wires up). Then packages the
-# folder's *contents* (not the folder itself) into a zip so the archive's top-
-# level entries are what MO2 / Vortex expect at the root of a direct install
-# (SKSE/, PrismaUI/, MCM/, Scripts/, NarrativeEngine.esp, etc.).
+# Runs build.ps1 first, which empties build/local-release/staging/ and refills
+# it with everything this checkout deploys (compiled DLL, dashboard bundle,
+# statics, compiled Papyrus, and the ESP the build just synced). Then packages
+# that folder's *contents* (not the folder itself) into a zip so the archive's
+# top-level entries are what MO2 / Vortex expect at the root of a direct
+# install (SKSE/, PrismaUI/, MCM/, Scripts/, NarrativeEngine.esp, etc.).
+#
+# It never zips the deployed mod folder. That folder is shared by every
+# worktree on the machine, so it holds whatever any of them last deployed;
+# packaging it shipped another worktree's dashboard bundle and language files
+# in v0.9.1. See build.ps1's header for how the staging folder is built.
 #
 # Usage:
 #   pwsh -File package.ps1 -Version 0.0.1            # writes out/NarrativeEngine-v0.0.1.zip
@@ -28,22 +33,23 @@ $ErrorActionPreference = 'Stop'
 # Normalize the version — accept '0.0.1', 'v0.0.1', 'V0.0.1' identically.
 $Version = $Version -replace '^[vV]', ''
 
-# The mod folder lives under SKYRIM_MODS_FOLDER, deployed there by CMake's
-# post-build steps invoked via build.ps1. Missing env var means we don't know
-# where to look; see docs/DEVELOPMENT.md.
-$modsFolder = $env:SKYRIM_MODS_FOLDER
-if (-not $modsFolder) {
+# Without SKYRIM_MODS_FOLDER CMake has nowhere to deploy, stages nothing, and
+# the ESP sync has no ESP to sync. See docs/DEVELOPMENT.md.
+if (-not $env:SKYRIM_MODS_FOLDER) {
     throw "SKYRIM_MODS_FOLDER is not set. See docs/DEVELOPMENT.md for setup."
 }
-$modFolder = Join-Path $modsFolder 'NarrativeEngine'
+
+# Named explicitly so the staging folder zipped below is the one this build filled.
+$preset = 'local-release'
+$stagingFolder = Join-Path $PSScriptRoot "build/$preset/staging"
 
 # --- 1. Build first ---------------------------------------------------------
 #
-# Any build failure aborts here — packaging a stale or partial mod folder
+# Any build failure aborts here — packaging a stale or partial staging folder
 # would produce a broken archive.
 
-Write-Host "==> Running build.ps1 to sync deployed mod content" -ForegroundColor Cyan
-& (Join-Path $PSScriptRoot 'build.ps1') build
+Write-Host "==> Running build.ps1 to refill the staging folder" -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot 'build.ps1') build -Preset $preset
 if ($LASTEXITCODE -ne 0) {
     throw "build.ps1 failed (exit $LASTEXITCODE); refusing to package."
 }
@@ -62,14 +68,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "check-esl-formids.ps1 reported violations (exit $LASTEXITCODE); refusing to package."
 }
 
-# --- 3. Sanity-check the mod folder ----------------------------------------
+# --- 3. Sanity-check the staging folder ------------------------------------
+#
+# The plugin and the ESP are the two files no install can work without, and
+# each reaches the staging folder by a different route (a CMake deploy rule;
+# build.ps1 copying the synced ESP in), so checking both catches either route
+# failing quietly.
 
-if (-not (Test-Path -LiteralPath $modFolder -PathType Container)) {
-    throw "Expected mod folder does not exist: $modFolder"
-}
-$modContents = Get-ChildItem -LiteralPath $modFolder -Force
-if (-not $modContents) {
-    throw "Mod folder is empty: $modFolder"
+foreach ($required in @('SKSE/Plugins/NarrativeEngine.dll', 'NarrativeEngine.esp')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $stagingFolder $required) -PathType Leaf)) {
+        throw "Staging folder $stagingFolder has no $required; refusing to package."
+    }
 }
 
 # --- 4. Package -------------------------------------------------------------
@@ -90,11 +99,11 @@ if (Test-Path -LiteralPath $archivePath) {
     Remove-Item -LiteralPath $archivePath -Force
 }
 
-Write-Host "==> Packaging $modFolder -> $archivePath" -ForegroundColor Cyan
+Write-Host "==> Packaging $stagingFolder -> $archivePath" -ForegroundColor Cyan
 
 Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $modFolder,
+    $stagingFolder,
     $archivePath,
     [System.IO.Compression.CompressionLevel]::Optimal,
     $false

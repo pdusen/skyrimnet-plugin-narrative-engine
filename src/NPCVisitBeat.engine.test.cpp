@@ -122,7 +122,7 @@ namespace
     constexpr std::uint32_t kStageRollback = 60;
     constexpr std::uint32_t kStageShutdown = 200;
 
-    constexpr std::uint32_t kRecordVersion = 3;
+    constexpr std::uint32_t kRecordVersion = 4;
 
     FakeSkyrimNetState& FakeLLM()
     {
@@ -295,7 +295,7 @@ namespace
 
     // Stand in for the force-fills landing.
     //
-    // The beat dispatches FillSenderSlot and FillReturnAnchorSlot into the
+    // The beat dispatches FillSlots, which fills both, into the
     // Papyrus VM, which the harness records but does not run, so nothing
     // would ever fill these. Pre-filling them means VerifyingFill sees what
     // it would have seen a tick after a real dispatch. That the dispatch was
@@ -305,6 +305,29 @@ namespace
     {
         engine.FillRefAlias(world.quest.aliases.at(0), world.sender);
         engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+    }
+
+    // Let the fills land as the beat asks for them, the way the script
+    // would run them. Pre-filling instead would put somebody in the aliases
+    // before the visit had filled anything, which is exactly what the beat
+    // now treats as a fill left over from a visit that never let go.
+    void FillAliasesOnDispatch(EngineMock& engine,
+                               const VisitWorld& world,
+                               bool fillSender = true,
+                               bool fillAnchor = true)
+    {
+        engine.papyrus.onDispatch =
+            [&engine, world, fillSender, fillAnchor](const EngineMock::PapyrusState::Dispatch& sent) {
+                if (sent.methodName != "FillSlots") {
+                    return;
+                }
+                if (fillSender) {
+                    engine.FillRefAlias(world.quest.aliases.at(0), world.sender);
+                }
+                if (fillAnchor) {
+                    engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+                }
+            };
     }
 
     TickResult Tick(NPCVisitBeat& beat, BeatState state, TickMode mode = TickMode::Normal)
@@ -501,10 +524,14 @@ namespace
         return false;
     }
 
+    // Whether `stage` was asked for. The terminal stages travel inside
+    // EndVisit, which sets them itself once the visit is closed; the rest are
+    // a SetStage of their own.
     bool DispatchedStage(const EngineMock& engine, std::int32_t stage)
     {
         for (std::size_t i = 0; i < engine.papyrus.dispatches.size(); ++i) {
-            if (engine.papyrus.dispatches[i].methodName != "SetStage")
+            const auto& method = engine.papyrus.dispatches[i].methodName;
+            if (method != "SetStage" && method != "EndVisit")
                 continue;
             for (const auto packed : engine.papyrus.packedInts) {
                 if (packed == stage)
@@ -659,7 +686,7 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     world.sender->SetPosition(RE::NiPoint3{4000.0f, 5000.0f, 600.0f}, false);
     beat.OnStart(BeatContext{}, SenderParams());
 
@@ -790,7 +817,7 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
         // filled anybody in. Nothing later would notice: the stage handlers
         // read the alias and return quietly when it is null, so the beat
         // would sit at Salutation until its timeout.
-        engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
+        FillAliasesOnDispatch(engine, world, /*fillSender=*/true, /*fillAnchor=*/false);
 
         SECTION("should roll the quest back rather than run it")
         {
@@ -829,7 +856,7 @@ TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[N
         if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
             pc->data.angle.z = 3.14159265f / 2.0f;
         }
-        FillAliases(engine, world);
+        FillAliasesOnDispatch(engine, world);
         PlaceSenderAway(engine, world.sender, 3000.0f);
         beat.OnStart(BeatContext{}, SenderParams());
 
@@ -848,7 +875,7 @@ TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[N
         // One placement succeeds -- the return anchor, made first -- and the
         // next one, the marker the sender is warped onto, does not.
         engine.spawn.placeSucceedsCount = 1;
-        FillAliases(engine, world);
+        FillAliasesOnDispatch(engine, world);
         PlaceSenderAway(engine, world.sender, 3000.0f);
         beat.OnStart(BeatContext{}, SenderParams());
 
@@ -864,7 +891,7 @@ TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[N
         // The dispatch into Papyrus is fire-and-forget: it reports that the
         // call was queued, not that it ran. A fill that never lands has to
         // time out rather than leave the beat waiting on it forever.
-        engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+        FillAliasesOnDispatch(engine, world, /*fillSender=*/false, /*fillAnchor=*/true);
         PlaceSenderAway(engine, world.sender, 3000.0f);
         beat.OnStart(BeatContext{}, SenderParams());
 
@@ -1019,10 +1046,11 @@ TEST_CASE("NPCVisitBeat waits for the fills it asked for", "[NPCVisitBeat][engin
         SECTION("should have asked Papyrus for both of them")
         {
             REQUIRE(RunCompose(beat) == BeatState::RUNNING);
-            // ForceRefTo has no native binding, so these two dispatches are
-            // the only way either alias is ever filled.
-            REQUIRE(DispatchedMethod(engine, "FillSenderSlot"));
-            REQUIRE(DispatchedMethod(engine, "FillReturnAnchorSlot"));
+            // ForceRefTo has no native binding, so this dispatch is the
+            // only way either alias is ever filled -- both in the one call,
+            // so a teardown cannot land between the two.
+            REQUIRE(DispatchedMethod(engine, "FillSlots"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "FillSenderSlot"));
         }
 
         SECTION("should have thrown away the marker it warped them onto")
@@ -1052,7 +1080,7 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     engine.calendar.hoursPassed = 100.0f;
     PlaceSenderAway(engine, world.sender, 3000.0f);
     beat.OnStart(BeatContext{}, SenderParams());
@@ -1229,7 +1257,7 @@ TEST_CASE("NPCVisitBeat calls off a visit the player has walked away from", "[NP
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     engine.calendar.hoursPassed = 100.0f;
     PlaceSenderAway(engine, world.sender, 3000.0f);
     auto* barrow = engine.AddLocation(0x0E010C01u, "Bleak Falls Barrow", {"LocTypeBanditCamp"});
@@ -1445,7 +1473,7 @@ TEST_CASE("NPCVisitBeat ends a visit the player fast-travels away from", "[NPCVi
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     engine.calendar.hoursPassed = 100.0f;
     PlaceSenderAway(engine, world.sender, 3000.0f);
     const auto clearDispatches = [&] {
@@ -1534,7 +1562,7 @@ TEST_CASE("NPCVisitBeat ends a visit the player fast-travels away from", "[NPCVi
             // The shutdown empties the alias, which is why the trampoline is
             // handed the visitor's id; the order is the other half of that.
             const auto recorded = DispatchIndex(engine, "RecordPlayerLeftAbruptly");
-            const auto shutdown = DispatchIndex(engine, "SetStage");
+            const auto shutdown = DispatchIndex(engine, "EndVisit");
             REQUIRE(recorded >= 0);
             REQUIRE(shutdown > recorded);
             REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
@@ -1615,7 +1643,7 @@ TEST_CASE("NPCVisitBeat holds the conversation while the world interrupts", "[NP
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
     engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
 
@@ -1734,7 +1762,7 @@ TEST_CASE("NPCVisitBeat closes the conversation", "[NPCVisitBeat][engine]")
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
 
     // Arrive, which is what arms the poll and starts the speech sampler.
@@ -1833,7 +1861,7 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
     engine.courier.questStage = static_cast<std::uint16_t>(kStageReturnHome);
 
@@ -1915,16 +1943,38 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
         engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
         PlaceSenderAway(engine, world.sender, 9000.0f);
 
-        SECTION("should put them back where they were standing anyway")
+        SECTION("should send them to the anchor the beat placed anyway")
         {
-            // There is no reference left to move them onto, but the
-            // snapshot still knows where the beat found them. This used to
-            // be a MoveTo onto the sender's own reference, which moves
-            // nobody anywhere and left them wherever the visit ended.
+            // The alias never took it, but the anchor itself is still
+            // standing, and its FormID is in the snapshot. A reference
+            // carries them across a cell boundary where a position cannot.
             const auto snap = VisitState::GetSnapshot();
             StageTick(beat);
-            REQUIRE(world.sender->GetPosition().x == snap.returnPosition.x);
-            REQUIRE(world.sender->GetPosition().y == snap.returnPosition.y);
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == snap.returnAnchorFormID);
+        }
+
+        SECTION("and the anchor itself is gone")
+        {
+            const auto snap = VisitState::GetSnapshot();
+            if (auto* form = RE::TESForm::LookupByID(snap.returnAnchorFormID)) {
+                if (auto* anchor = form->As<RE::TESObjectREFR>()) {
+                    anchor->SetDelete(true);
+                }
+            }
+
+            SECTION("should put them back where they were standing")
+            {
+                // There is no reference left to move them onto, but the
+                // snapshot still knows where the beat found them. This used
+                // to be a MoveTo onto the sender's own reference, which
+                // moves nobody anywhere and left them wherever the visit
+                // ended.
+                StageTick(beat);
+                REQUIRE(world.sender->GetPosition().x == snap.returnPosition.x);
+                REQUIRE(world.sender->GetPosition().y == snap.returnPosition.y);
+            }
         }
     }
 }
@@ -1940,7 +1990,7 @@ TEST_CASE("NPCVisitBeat freezes when the world is not running", "[NPCVisitBeat][
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     PlaceSenderAway(engine, world.sender, 9000.0f);
     beat.OnStart(BeatContext{}, SenderParams());
 
@@ -2008,17 +2058,50 @@ TEST_CASE("NPCVisitBeat tears the visit down", "[NPCVisitBeat][engine]")
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
+    FillAliasesOnDispatch(engine, world);
     ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
 
     SECTION("when the quest has come to rest")
     {
+        // What Shutdown leaves: stage 0 and both aliases emptied.
         engine.courier.questStage = 0;
+        engine.FillRefAlias(world.quest.aliases.at(0), nullptr);
+        engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
 
         SECTION("should finish and forget the visit")
         {
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
             REQUIRE(VisitState::GetSnapshot().senderFormID == 0);
+        }
+    }
+
+    SECTION("when the quest reads stage 0 but still holds the sender")
+    {
+        // Stage 0 is also what a stopped quest reads after a fill has
+        // landed on it, which is the state the old stage-only test called
+        // finished and walked away from.
+        engine.courier.questStage = 0;
+
+        SECTION("should keep waiting rather than call it done")
+        {
+            REQUIRE_FALSE(Tick(beat, BeatState::CLEANUP).transitionTo.has_value());
+        }
+
+        SECTION("should still tear the visit down, since it started the quest")
+        {
+            Tick(beat, BeatState::CLEANUP);
+            REQUIRE(DispatchedMethod(engine, "EndVisit"));
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+
+        SECTION("should send the repair in once it has waited long enough")
+        {
+            TickResult last;
+            for (int i = 0; i < 60 && !last.transitionTo; ++i) {
+                last = Tick(beat, BeatState::CLEANUP);
+            }
+            REQUIRE(last.transitionTo == BeatState::NOT_RUNNING);
+            REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
         }
     }
 
@@ -2381,5 +2464,380 @@ TEST_CASE("NPCVisitBeat with a quest missing its aliases", "[NPCVisitBeat][engin
     SECTION("should never offer itself")
     {
         REQUIRE_FALSE(beat.IsAvailable(BeatContext{}));
+    }
+}
+
+TEST_CASE("NPCVisitBeat lets go of a fill no visit owns", "[NPCVisitBeat][engine]")
+{
+    // A fill that lands after the visit quest has shut down survives every
+    // later shutdown, because the quest is already stopped. The actor keeps
+    // the alias, and the Follow package with it, for the rest of the save:
+    // one player had an NPC follow them indefinitely, through aborts, through
+    // stopquest, with nothing on the dashboard saying why.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    auto* stranger = engine.AddActor(kOtherSender);
+
+    const auto repair = [](const char* trigger) {
+        bool repaired = false;
+        PluginThread::detail::JobDispatcher::Invoke([&](const PluginThread::Token& pt) {
+            repaired = NarrativeEngine::MainThread::Run(pt, [&](const NarrativeEngine::MainThread::Token& mt) {
+                return NarrativeEngine::NPCVisitBeat_Repair::RepairStaleVisitQuest(mt, trigger);
+            });
+        });
+        return repaired;
+    };
+    const auto strandStranger = [&] {
+        engine.FillRefAlias(world.quest.aliases.at(0), stranger);
+        engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+    };
+
+    SECTION("when the quest holds somebody and no visit is running")
+    {
+        strandStranger();
+        const bool repaired = repair("test");
+
+        SECTION("should say it found something")
+        {
+            REQUIRE(repaired);
+        }
+
+        SECTION("should send them home to the anchor the quest still holds")
+        {
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kOtherSender);
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+        }
+
+        SECTION("should ask the quest script to clear the aliases")
+        {
+            // Nothing in C++ can clear an alias; the script's Clear() is the
+            // only thing that takes the package off them.
+            REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
+        }
+    }
+
+    SECTION("when the quest is empty and at rest")
+    {
+        engine.courier.questStage = 0;
+
+        SECTION("should leave it alone")
+        {
+            REQUIRE_FALSE(repair("test"));
+            REQUIRE(engine.papyrus.dispatches.empty());
+        }
+    }
+
+    SECTION("when the quest is empty but still reads a stage")
+    {
+        // A visit nobody is driving any more: started, never torn down.
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+
+        SECTION("should have the script stop it")
+        {
+            REQUIRE(repair("test"));
+            REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
+            REQUIRE(engine.questControl.teleports.empty());
+        }
+    }
+
+    SECTION("when a visit starts over a leftover fill")
+    {
+        strandStranger();
+        NPCVisitBeat beat;
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+
+        SECTION("should clear it before filling anything of its own")
+        {
+            REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "FillSlots"));
+        }
+    }
+
+    SECTION("when a visit is aborted with somebody else in the alias")
+    {
+        NPCVisitBeat beat;
+        FillAliasesOnDispatch(engine, world);
+        ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        engine.questControl.teleports.clear();
+        engine.FillRefAlias(world.quest.aliases.at(0), stranger);
+        AbortFromMainThread(beat);
+
+        SECTION("should hand the stranger to the repair rather than treat them as the visitor")
+        {
+            // The repair sends them home and has the script let go of them.
+            REQUIRE(DispatchedMethod(engine, "RepairOrphanedFills"));
+            bool strangerMoved = false;
+            for (const auto& teleport : engine.questControl.teleports) {
+                strangerMoved = strangerMoved || teleport.moverFormID == kOtherSender;
+            }
+            REQUIRE(strangerMoved);
+        }
+
+        SECTION("should still send its own sender home, alias or no alias")
+        {
+            // They were warped in, so they are standing wherever the visit
+            // left them whatever the alias says.
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+        }
+
+        SECTION("should still shut the quest down")
+        {
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat ends each visit in the quest script before stopping it", "[NPCVisitBeat][engine]")
+{
+    // The fills and the teardown are separately-queued Papyrus calls, and
+    // the VM runs them in no promised order. EndVisit is what lets the
+    // script refuse a fill that lands after its visit is over, so it has to
+    // be queued ahead of the stage that stops the quest.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliasesOnDispatch(engine, world);
+
+    SECTION("when a running visit is taken away")
+    {
+        ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        engine.papyrus.dispatches.clear();
+        AbortFromMainThread(beat);
+
+        SECTION("should close the visit and shut the quest down in the one call")
+        {
+            // Separate calls could run in either order. EndVisit sets the
+            // shutdown stage itself, so the stage never lands first.
+            REQUIRE(DispatchedMethod(engine, "EndVisit"));
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+            REQUIRE_FALSE(DispatchedMethod(engine, "SetStage"));
+        }
+
+        SECTION("should delete the anchor it placed, whether or not the alias ever held it")
+        {
+            // The arrival marker went when the warp landed; the anchor is
+            // the only other reference the beat placed.
+            REQUIRE(SurvivingPlacedRefs(engine) == 0);
+        }
+    }
+
+    SECTION("when a visit is taken away before it has started the quest")
+    {
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+        AbortFromMainThread(beat);
+
+        SECTION("should still close the visit")
+        {
+            REQUIRE(DispatchedMethod(engine, "EndVisit"));
+        }
+
+        SECTION("should not set a stage on a quest it never started")
+        {
+            REQUIRE(engine.questControl.started.empty());
+            REQUIRE_FALSE(DispatchedMethod(engine, "SetStage"));
+            REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat looks after a visitor whose fill never landed", "[NPCVisitBeat][engine]")
+{
+    // The warp moves the sender before the fill is even queued, so a fill
+    // that never lands leaves them standing at the arrival point. Every
+    // teardown used to look for them in the alias, find nobody, and leave
+    // them there.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    beat.OnStart(BeatContext{}, SenderParams());
+
+    SECTION("when the fills time out")
+    {
+        REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+
+        SECTION("should send the warped sender home")
+        {
+            // Two teleports: the warp in, and the walk home it stands in for.
+            REQUIRE(engine.questControl.teleports.size() >= 2);
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+        }
+
+        SECTION("should have heard the fill call run")
+        {
+            REQUIRE(engine.papyrus.callbacksRun > 0);
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat keeps candidates out of a quest that still holds them", "[NPCVisitBeat][engine]")
+{
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+
+    const auto held = [&](RE::Actor* actor) {
+        bool result = false;
+        PluginThread::detail::JobDispatcher::Invoke([&](const PluginThread::Token& pt) {
+            result = NarrativeEngine::MainThread::Run(
+                pt, [&](const NarrativeEngine::MainThread::Token&) { return Query::IsHeldByVisitQuest(actor); });
+        });
+        return result;
+    };
+
+    SECTION("when the Sender alias holds them")
+    {
+        engine.FillRefAlias(world.quest.aliases.at(0), world.sender);
+
+        SECTION("should count them as held")
+        {
+            REQUIRE(held(world.sender));
+        }
+
+        SECTION("should not offer the beat on them alone")
+        {
+            // The only candidate is the one stuck in the quest.
+            REQUIRE_FALSE(NPCVisitBeat{}.IsAvailable(BeatContext{}));
+        }
+    }
+
+    SECTION("when nothing holds them")
+    {
+        SECTION("should leave them free")
+        {
+            REQUIRE_FALSE(held(world.sender));
+        }
+
+        SECTION("should offer the beat on them")
+        {
+            REQUIRE(NPCVisitBeat{}.IsAvailable(BeatContext{}));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat calls a visitor stuck only when they are", "[NPCVisitBeat][engine]")
+{
+    // The dashboard offers Release Stuck Visitor on this alone, and a player
+    // shown it for a visitor who simply has not left yet will press it. So it
+    // takes an actual NPC in the Sender alias, no visit running, and long
+    // enough since the last visit ended that its teardown cannot still be
+    // landing.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    auto* stranger = engine.AddActor(kOtherSender);
+
+    // Unpaused play, as Tick.cpp feeds it; under 30s, so the watchdog does
+    // not run and repair what the case is looking at.
+    const auto play = [](double seconds) {
+        PluginThread::detail::JobDispatcher::Invoke(
+            [&](const PluginThread::Token& pt) { NarrativeEngine::NPCVisitBeat_Repair::Poll(pt, seconds); });
+    };
+    const auto stuck = [] {
+        bool result = false;
+        PluginThread::detail::JobDispatcher::Invoke([&](const PluginThread::Token& pt) {
+            result = NarrativeEngine::MainThread::Run(
+                pt, [](const NarrativeEngine::MainThread::Token&) { return Query::GetQuestHold().stuckVisitor; });
+        });
+        return result;
+    };
+
+    SECTION("when an NPC is left in the quest with no visit running")
+    {
+        engine.FillRefAlias(world.quest.aliases.at(0), stranger);
+
+        SECTION("should call them stuck once there has been time for any teardown to land")
+        {
+            play(11.0);
+            REQUIRE(stuck());
+        }
+
+        SECTION("should not call them stuck straight away")
+        {
+            play(5.0);
+            REQUIRE_FALSE(stuck());
+        }
+    }
+
+    SECTION("when only the anchor is left")
+    {
+        engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+        play(11.0);
+
+        SECTION("should not call anybody stuck, since there is no visitor")
+        {
+            REQUIRE_FALSE(stuck());
+        }
+    }
+
+    SECTION("when a visit is in progress")
+    {
+        NPCVisitBeat beat;
+        FillAliasesOnDispatch(engine, world);
+        ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
+        // Well past the grace. The watchdog looks in along the way, and
+        // leaves a visit in flight alone.
+        play(20.0);
+        play(20.0);
+
+        SECTION("should never call its visitor stuck, however long they stay")
+        {
+            REQUIRE_FALSE(stuck());
+        }
+
+        SECTION("and it has just been aborted")
+        {
+            AbortFromMainThread(beat);
+            // The harness never runs the teardown, so the sender is still in
+            // the alias -- which is what the game looks like until it lands.
+            REQUIRE(world.quest.aliases.at(0)->GetReference() == world.sender);
+
+            SECTION("should give the teardown time to land first")
+            {
+                play(5.0);
+                REQUIRE_FALSE(stuck());
+            }
+
+            SECTION("should call them stuck if it never does")
+            {
+                play(11.0);
+                REQUIRE(stuck());
+            }
+        }
     }
 }
