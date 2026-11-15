@@ -2,12 +2,19 @@
 
 #include <PlotBirth.h>
 #include <PlotStepParse.h>
+#include <PlotText.h>
+#include <PlotVerbs.h>
+#include <ShippedLanguage.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <deque>
+#include <format>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Tests for planning a scheme by decision, backwards from its goal.
@@ -90,6 +97,53 @@ namespace
 
     // A decision model that answers from a list, and remembers what it was
     // asked.
+    // A step record as plot_step.prompt words it, rebuilt from the English
+    // dashboard line that prompt mirrors, so a case can say which sentence a
+    // question showed. The prompt's own wording is checked by rendering it;
+    // what this checks is that the record carries the right fills.
+    std::string Sentence(const nlohmann::json& step)
+    {
+        const auto* verb = NarrativeEngine::PlotVerbs::Find(step.at("verb").get<std::string>());
+        REQUIRE(verb != nullptr);
+        const auto* line = NarrativeEngine::Testing::ShippedEnglish().Source(NarrativeEngine::PlotText::LineKey(*verb));
+        REQUIRE(line != nullptr);
+        const auto& fill = step.at("fill");
+        auto out = NarrativeEngine::PlotVerbs::Render(
+            *line,
+            [&fill](std::string_view name) -> std::optional<std::string> {
+                const auto it = fill.find(name);
+                return it != fill.end() ? std::optional<std::string>{it->get<std::string>()} : std::nullopt;
+            },
+            [&step, verb](std::string_view name) {
+                if (name == "agent") {
+                    return std::string{step.at("agent_open").get<bool>() ? "[agent]" : "someone"};
+                }
+                if (step.at("open").get<bool>()) {
+                    return std::format("[{}]", name);
+                }
+                const auto* slot = NarrativeEngine::PlotVerbs::FindSlot(*verb, name);
+                using NarrativeEngine::PlotVerbs::SlotKind;
+                const auto kind = slot != nullptr ? slot->kind : SlotKind::Person;
+                return std::string{kind == SlotKind::Place   ? "somewhere"
+                                   : kind == SlotKind::Thing ? "something"
+                                                             : "someone"};
+            });
+        out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
+        return out;
+    }
+
+    // One option as the question's list reads it: a preparation's "Before
+    // step N: ", then its step's sentence, or the name of who or what it is.
+    std::string Line(const nlohmann::json& option)
+    {
+        if (!option.contains("step")) {
+            return option.at("name").get<std::string>();
+        }
+        const auto before =
+            option.contains("before") ? std::format("Before step {}: ", option.at("before").get<int>()) : std::string{};
+        return before + Sentence(option.at("step"));
+    }
+
     struct Script
     {
         struct Asked
@@ -153,7 +207,7 @@ namespace
         {
             std::vector<std::string> out;
             for (const auto& o : asked.at(index).ctx["options"]) {
-                out.push_back(o["line"].get<std::string>());
+                out.push_back(Line(o));
             }
             return out;
         }
@@ -280,13 +334,13 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
             REQUIRE(f.script.Lines(3)
                     == std::vector<std::string>{"Before step 1: Someone watches Hulda, learning their habits.",
                                                 "Before step 1: Someone asks around [place] about Hulda."});
-            REQUIRE(f.script.asked[3].ctx["plan"][0] == "1. Someone steals a ruby from Hulda.");
+            REQUIRE(Sentence(f.script.asked[3].ctx["plan"][0]) == "Someone steals a ruby from Hulda.");
         }
 
         SECTION("should fill the goal's slots knowing it is the goal")
         {
-            REQUIRE(f.script.asked[1].ctx["step"] == "Someone steals [item] from [mark].");
-            REQUIRE(f.script.asked[1].ctx["purpose"] == "This step accomplishes the scheme.");
+            REQUIRE(Sentence(f.script.asked[1].ctx["step"]) == "Someone steals [item] from [mark].");
+            REQUIRE(f.script.asked[1].ctx["purpose"]["kind"] == "goal");
         }
 
         SECTION("should leave the agent for dispatch")
@@ -338,10 +392,10 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
 
         SECTION("should put the people it names on the list first, and tell the question how it ends")
         {
-            const auto lines = f.script.Lines(0);
-            REQUIRE(lines.size() == 2);
-            REQUIRE(lines[0].find("named in the scheme") != std::string::npos);
-            REQUIRE(lines[1].find("named in the scheme") != std::string::npos);
+            const auto& options = f.script.asked[0].ctx["options"];
+            REQUIRE(options.size() == 2);
+            REQUIRE(options[0]["named"] == true);
+            REQUIRE(options[1]["named"] == true);
             REQUIRE(f.script.asked[0].ctx["finish"] == "watch Idolaf");
         }
     }
@@ -542,7 +596,10 @@ TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
 
         SECTION("should tell the item's question what the planting is for")
         {
-            REQUIRE(f.script.asked[3].ctx["purpose"] == "It prepares for step 1: Someone denounces Hulda to Laila.");
+            const auto& purpose = f.script.asked[3].ctx["purpose"];
+            REQUIRE(purpose["kind"] == "prepares");
+            REQUIRE(purpose["before"] == 1);
+            REQUIRE(Sentence(purpose["step"]) == "Someone denounces Hulda to Laila.");
         }
     }
 
@@ -1148,9 +1205,58 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
         {
             const auto unknown = parse("document");
             REQUIRE_FALSE(unknown.ok);
-            REQUIRE(unknown.rejection.find("document") != std::string::npos);
+            REQUIRE(unknown.rejection.code == NarrativeEngine::PlotRejection::Code::GoalUnknown);
+            REQUIRE(unknown.rejection.args["goal"] == "document");
             REQUIRE(unknown.scheme.empty());
             REQUIRE_FALSE(parse("").ok);
+        }
+    }
+}
+
+TEST_CASE("PlotBirth::ParseAmbition refuses a word in two alphabets", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::ParseAmbition;
+    using NarrativeEngine::PlotBirth::TextLimits;
+
+    nlohmann::json j;
+    j["reasoning"] = "x";
+    j["goal"] = "denounce";
+    j["roles"] = RolesFor("denounce");
+    j["finish"] = "denounce Hulda to Balgruuf";
+    // "spread rumors in Солitude", as a Russian answer half-wrote Solitude.
+    j["ambition"] = "He means to own Whiterun.";
+    j["scheme"] = "spread rumors in \xD0\xA1\xD0\xBE\xD0\xBBitude";
+
+    const auto out = ParseAmbition(j.dump(), TextLimits{});
+    REQUIRE_FALSE(out.ok);
+    CHECK(out.rejection.code == NarrativeEngine::PlotRejection::Code::MixedScript);
+    CHECK(out.rejection.args["key"] == "scheme");
+    CHECK(out.rejection.args["word"] == "\xD0\xA1\xD0\xBE\xD0\xBBitude");
+}
+
+TEST_CASE("PlotBirth::IsCutOff", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::IsCutOff;
+
+    SECTION("when an answer opens as an object and stops partway")
+    {
+        SECTION("should say it was cut off, fenced or not")
+        {
+            // From a trial run, word for word but for the name.
+            CHECK(IsCutOff(R"({"reasoning": "x", "roles": {"mark": "Maven Black)"));
+            CHECK(IsCutOff("```json\n{\"goal\": \""));
+            CHECK(IsCutOff("  {"));
+        }
+    }
+
+    SECTION("when an answer is whole, or never was JSON")
+    {
+        SECTION("should not, since asking again would get the same answer")
+        {
+            CHECK_FALSE(IsCutOff(R"({"goal": "steal"})"));
+            CHECK_FALSE(IsCutOff("```json\n{\"goal\": \"steal\"}\n```"));
+            CHECK_FALSE(IsCutOff("I would rather not."));
+            CHECK_FALSE(IsCutOff(""));
         }
     }
 }
@@ -1210,7 +1316,8 @@ TEST_CASE("PlotBirth::ParseAmbition refuses the player by name", "[PlotBirth][en
         SECTION("should refuse it, saying why")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("player") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::NamesPlayer);
+            REQUIRE(out.rejection.args["key"] == "finish");
         }
     }
 
@@ -1268,7 +1375,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         SECTION("should refuse it, saying it cannot end a scheme")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("cannot end a scheme") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::GoalNotFinishing);
         }
     }
 
@@ -1294,7 +1401,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         SECTION("should refuse it, whatever its case or period, saying why")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("already accomplished") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::SchemeAccomplished);
         }
 
         SECTION("should accept one they have not")
@@ -1311,7 +1418,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         {
             const auto out = ParseAmbition(j.dump(), TextLimits{});
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("finish") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::FinishNotVerb);
         }
     }
 }
@@ -1336,7 +1443,9 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
         SECTION("should refuse the answer, saying which role and what it is for")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("authority (whom they are denounced to)") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::RolesMissing);
+            REQUIRE(out.rejection.args["missing"]
+                    == nlohmann::json::array({{{"verb", "denounce"}, {"name", "authority"}}}));
         }
     }
 
@@ -1358,7 +1467,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
             ParseAmbition(j.dump(), TextLimits{}, {}, [&asked](const auto&, const auto& named, auto& resolved) {
                 asked = named;
                 resolved = {{"mark", kTrader, "Hulda"}, {"authority", kJarl, "Laila"}};
-                return std::string{};
+                return std::vector<NarrativeEngine::PlotRejection::Rejection>{};
             });
 
         SECTION("should hand the resolver each role in the goal's slot order, and keep what it resolved")
@@ -1377,13 +1486,16 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
     {
         j["roles"] = {{"mark", "Hulda"}, {"authority", "Balgruuf"}};
         const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, [](const auto&, const auto&, auto&) {
-            return std::string{"Balgruuf cannot be the authority"};
+            using NarrativeEngine::PlotRejection::Code;
+            return std::vector{NarrativeEngine::PlotRejection::Make(Code::RoleNotAdmitted, {{"who", "Balgruuf"}})};
         });
 
         SECTION("should refuse the answer with the resolver's reason")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection == "the roles do not fit: Balgruuf cannot be the authority");
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::RolesUnfit);
+            REQUIRE(out.rejection.args["problems"]
+                    == nlohmann::json::array({{{"code", "role_not_admitted"}, {"who", "Balgruuf"}}}));
             REQUIRE(out.roles.empty());
         }
     }
@@ -1401,8 +1513,8 @@ TEST_CASE("PlotPlanning::PickAgent", "[PlotPlanning][engine]")
     step.verb = "watch";
     step.slots.push_back({"mark", kTrader, "Hulda"});
 
-    const std::vector<PlotPlanning::AgentOption> two{{kFriend, "Idolaf (someone they know)"},
-                                                     {kBoss, "Olfrid themselves"}};
+    const std::vector<PlotPlanning::AgentOption> two{{kFriend, "Idolaf", {"", "close", "", false}},
+                                                     {kBoss, "Olfrid", {}, true}};
 
     SECTION("when only one person may be asked")
     {
@@ -1428,7 +1540,7 @@ TEST_CASE("PlotPlanning::PickAgent", "[PlotPlanning][engine]")
             REQUIRE(agent == kBoss);
             REQUIRE(script.asked.size() == 1);
             REQUIRE(script.asked[0].ctx["slot"] == "agent");
-            REQUIRE(script.asked[0].ctx["step"] == "[agent] watches Hulda, learning their habits.");
+            REQUIRE(Sentence(script.asked[0].ctx["step"]) == "[agent] watches Hulda, learning their habits.");
         }
     }
 

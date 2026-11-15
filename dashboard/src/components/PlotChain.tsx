@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { label, t } from '../i18n/strings';
 import type { PlotEntry, PlotNode } from '../types';
 
 // PlotChain — one plot as a horizontal chain of numbered nodes.
@@ -126,37 +127,50 @@ function NodeDetail({ node }: { node: PlotNode }) {
     return (
         <div className="plot-node-detail">
             <div className="plot-detail-row">
-                <span className="plot-detail-label">race</span>
+                <span className="plot-detail-label">{t('plots.detail.race')}</span>
                 <span>
-                    progress {num(node.progress)} / {num(node.threshold)} ({Math.round(node.fraction * 100)}%)
+                    {t('plots.detail.progress', {
+                        progress: num(node.progress),
+                        threshold: num(node.threshold),
+                        pct: t('plots.percent', { n: Math.round(node.fraction * 100) }),
+                    })}
                     {'  ·  '}
-                    tick {node.elapsed} / {node.budget}
-                    {held > 0 ? `  ·  held ${held}` : ''}
+                    {t('plots.detail.tick', { elapsed: node.elapsed, budget: node.budget })}
+                    {held > 0 && (
+                        <>
+                            {'  ·  '}
+                            {t('plots.detail.held', { n: held })}
+                        </>
+                    )}
                 </span>
             </div>
             <div className="plot-detail-row">
-                <span className="plot-detail-label">cast</span>
+                <span className="plot-detail-label">{t('plots.detail.cast')}</span>
                 <span>
-                    {node.actor || '(not yet dispatched)'}
+                    {node.actor || t('plots.detail.not_dispatched')}
                     {node.target ? ` → ${node.target}` : ''}
                 </span>
             </div>
             <div className="plot-detail-row">
-                <span className="plot-detail-label">sizing</span>
+                <span className="plot-detail-label">{t('plots.detail.sizing')}</span>
                 <span>
-                    travel {num(node.sizing.travel)} · importance {num(node.sizing.importance)} · competence{' '}
-                    {num(node.sizing.competence)} · suitability {num(node.sizing.suitability)}
+                    {t('plots.detail.sizing_values', {
+                        travel: num(node.sizing.travel),
+                        importance: num(node.sizing.importance),
+                        competence: num(node.sizing.competence),
+                        suitability: num(node.sizing.suitability),
+                    })}
                 </span>
             </div>
             {node.rolls.length > 0 && (
                 <div className="plot-detail-row">
-                    <span className="plot-detail-label">rolls</span>
+                    <span className="plot-detail-label">{t('plots.detail.rolls')}</span>
                     <span className="plot-rolls">
                         {node.rolls.map((r, i) => (
                             <span
                                 key={i}
                                 className={r.caught ? 'plot-roll caught' : r.held ? 'plot-roll held' : 'plot-roll'}
-                                title={`tick ${i + 1}: +${num(r.added)} → ${num(r.after)}`}
+                                title={t('plots.detail.roll', { tick: i + 1, added: num(r.added), after: num(r.after) })}
                             >
                                 {r.held ? '–' : r.caught ? '✕' : num(r.added, 1)}
                             </span>
@@ -170,7 +184,7 @@ function NodeDetail({ node }: { node: PlotNode }) {
                 line of prose at the top pushes the numbers down. */}
             {node.description && (
                 <div className="plot-detail-row plot-detail-description">
-                    <span className="plot-detail-label">step</span>
+                    <span className="plot-detail-label">{t('plots.detail.step')}</span>
                     <span>{node.description}</span>
                 </div>
             )}
@@ -203,12 +217,16 @@ function ChainNode({
                     style={{ width: NODE, height: NODE, background: c.fill, borderColor: c.stroke, color: c.text }}
                     onClick={onToggle}
                     aria-expanded={expanded}
-                    aria-label={`Step ${node.number}, ${node.label}, ${node.state.replace('_', ' ')}`}
+                    aria-label={t('plots.node', {
+                        number: node.number,
+                        label: node.label,
+                        state: t(`plot_state.${node.state}`),
+                    })}
                 >
                     {node.state === 'in_progress' && <ProgressRing fraction={node.fraction} />}
                     <span className="plot-node-number">{node.number}</span>
                     {node.state === 'in_progress' && (
-                        <span className="plot-node-pct">{Math.round(node.fraction * 100)}%</span>
+                        <span className="plot-node-pct">{t('plots.percent', { n: Math.round(node.fraction * 100) })}</span>
                     )}
                     {node.state === 'failed' && (
                         <span className="plot-node-cross" aria-hidden="true">
@@ -251,8 +269,21 @@ export function PlotChain({ plot }: { plot: PlotEntry }): ReactNode {
                 <h3 className="plot-title">{sentence(plot.title)}</h3>
                 <span className="plot-meta">
                     {plot.mastermind}
-                    {plot.adaptations > 0 && `  ·  ${plot.adaptations}/${plot.max_adaptations} adaptations`}
-                    {plot.status !== 'active' && `  ·  ${plot.status} (${plot.outcome.replace(/_/g, ' ')})`}
+                    {plot.adaptations > 0 && (
+                        <>
+                            {'  ·  '}
+                            {t('plots.adapted', { n: plot.adaptations, max: plot.max_adaptations })}
+                        </>
+                    )}
+                    {plot.status !== 'active' && (
+                        <>
+                            {'  ·  '}
+                            {t('plots.ended', {
+                                status: label('plot_status.', plot.status),
+                                outcome: label('plot_outcome.', plot.outcome),
+                            })}
+                        </>
+                    )}
                 </span>
             </div>
             {plot.ambition && <p className="plot-ambition">{sentence(plot.ambition)}</p>}
@@ -294,16 +325,16 @@ export function PlotChainLegend(): ReactNode {
     return (
         <div className="plot-legend">
             <span>
-                <i className="plot-swatch completed" /> Completed
+                <i className="plot-swatch completed" /> {t('plot_state.completed')}
             </span>
             <span>
-                <i className="plot-swatch in-progress" /> In progress
+                <i className="plot-swatch in-progress" /> {t('plot_state.in_progress')}
             </span>
             <span>
-                <i className="plot-swatch pending" /> Pending
+                <i className="plot-swatch pending" /> {t('plot_state.pending')}
             </span>
             <span>
-                <i className="plot-swatch failed">✕</i> Failed
+                <i className="plot-swatch failed">✕</i> {t('plot_state.failed')}
             </span>
         </div>
     );

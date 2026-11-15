@@ -64,10 +64,10 @@ namespace NarrativeEngine::SenderDialogue
         //
         // A row from PublicGetRecentEvents has NO `text` field. What it
         // carries is `type` plus a `data` object, and
-        // SkyrimNetEvents::FormatEventsText is what synthesizes `text`
-        // from the two -- in place, for callers that want the rendered
-        // "Speaker -> Listener: line" form. We want the bare line, so
-        // we read `data.dialogue` directly and never run that pass.
+        // SkyrimNetEvents::DescribeEvents is what turns the two into a
+        // `line` record -- in place, for callers that show the whole
+        // event. We want the bare line, so we read `data.dialogue`
+        // directly and never run that pass.
         //
         // The header's own example row shows a flat `text`, which is
         // why the first cut of this read one and silently dropped every
@@ -226,9 +226,9 @@ namespace NarrativeEngine::SenderDialogue
             if (nowGameSeconds > 0.0 && gt > 0.0) {
                 // Canonical formatter, shared with events and memories,
                 // so every age the prompt shows reads the same.
-                e["age_str"] = SkyrimNetEvents::FormatRelativeGameTime(std::max(0.0, nowGameSeconds - gt));
+                e["age"] = SkyrimNetEvents::RelativeGameTime(std::max(0.0, nowGameSeconds - gt));
             } else {
-                e["age_str"] = std::string{"recent"};
+                e["age"] = nlohmann::json{{"value", 0}, {"unit", "unknown"}};
             }
             e.erase("gameTime");
         }

@@ -1,5 +1,7 @@
 #include <NPCLetterBeat.h>
 
+#include <ShippedLanguage.h>
+
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
@@ -293,9 +295,11 @@ TEST_CASE("NPCLetterBeat says what it is", "[NPCLetterBeat][engine]")
 
     SECTION("should tell the model which parameter it must supply")
     {
-        // The description IS the prompt the picker reads. A sender it does not
+        // The description, now the beat's own prompt file, IS what the picker reads. A sender it does not
         // ask for is a beat that fails to start every time it is chosen.
-        REQUIRE(beat.Description().find("sender_npc_form_id") != std::string::npos);
+        REQUIRE(NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/beats/" + beat.Name())
+                    .find("sender_npc_form_id")
+                != std::string::npos);
     }
 }
 

@@ -2,6 +2,8 @@
 
 #include <EngineUtils.h>
 #include <EventLogUtil.h>
+#include <EventText.h>
+#include <Localization.h>
 #include <logger.h>
 #include <PhaseTracker.h>
 #include <Region.h>
@@ -22,7 +24,7 @@ namespace NarrativeEngine::TravelEventLog
 {
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        constexpr std::uint32_t kRecordVersion = 2;
         constexpr std::size_t kDefaultMaxStored = 128;
 
         enum class Kind : std::uint8_t
@@ -181,11 +183,9 @@ namespace NarrativeEngine::TravelEventLog
         std::vector<std::string> CollectParty(RE::PlayerCharacter* pc, float radius)
         {
             std::vector<std::string> out;
-            std::string playerName = ActorDisplayName(pc);
-            if (playerName.empty()) {
-                playerName = "The Player";
-            }
-            out.push_back(std::move(playerName));
+            // An unnamed player is saved as an empty name, not as words for
+            // them: the wording says it.
+            out.push_back(ActorDisplayName(pc));
 
             if (!pc) {
                 return out;
@@ -530,30 +530,19 @@ namespace NarrativeEngine::TravelEventLog
 
     namespace
     {
-        // "Varian" / "Varian and Jenassa" / "Varian, Jenassa, and Marcurio"
-        std::string RenderParty(const std::vector<std::string>& names)
+        // The party as a record carries it: the saved names, the player
+        // first and empty when unnamed. EventText and the prompts say an
+        // unnamed player, and join the names.
+        nlohmann::json Party(const std::vector<std::string>& saved)
         {
-            if (names.empty())
-                return "The Player";
-            if (names.size() == 1)
-                return names[0];
-            if (names.size() == 2)
-                return names[0] + " and " + names[1];
-            std::string out;
-            for (std::size_t i = 0; i + 1 < names.size(); ++i) {
-                out += names[i];
-                out += ", ";
+            nlohmann::json party = nlohmann::json::array();
+            for (const auto& name : saved) {
+                party.push_back(name);
             }
-            out += "and ";
-            out += names.back();
-            return out;
-        }
-
-        // "is" for singular party, "are" for two-plus. Only used in the
-        // entered_wilderness sentence.
-        const char* PartyVerb(const std::vector<std::string>& names)
-        {
-            return names.size() >= 2 ? "are" : "is";
+            if (party.empty()) {
+                party.push_back(std::string{});
+            }
+            return party;
         }
 
         // Ensure a hold display name ends with " Hold". Idempotent;
@@ -585,76 +574,66 @@ namespace NarrativeEngine::TravelEventLog
             return FormatHoldName(holdName);
         }
 
-        // Standalone (single-event) sentence rendering, minus the
-        // "[N ago]" prefix.
+        // A single event's `line` record (see EventText.h).
         //
-        // Verb choice distinguishes exterior (arrived at / departed
-        // from) from interior (entered / exited / visited) so the
-        // reader can tell a Lakeview Manor exterior arrival from
-        // walking through its front door.
-        std::string RenderEventBody(const InternalEvent& e)
+        // `interior` lets the wording tell exterior (arrived at / departed
+        // from) from interior (entered / exited / visited), so the reader
+        // can tell a Lakeview Manor exterior arrival from walking through
+        // its front door.
+        nlohmann::json LineOf(const InternalEvent& e)
         {
-            const std::string party = RenderParty(e.partyNames);
+            nlohmann::json line{{"kind", "travel"}, {"move", KindSlug(e.kind)}, {"party", Party(e.partyNames)}};
             switch (e.kind) {
             case Kind::EnteredLocation:
-                return party + (e.toInterior ? " entered " : " arrived at ") + e.toLocationName + ".";
+                line["place"] = e.toLocationName;
+                line["interior"] = e.toInterior;
+                break;
             case Kind::LeftLocation:
-                return party + (e.fromInterior ? " exited " : " departed from ") + e.fromLocationName + ".";
+                line["place"] = e.fromLocationName;
+                line["interior"] = e.fromInterior;
+                break;
             case Kind::CrossedHolds:
-                return party + " crossed from " + FormatHoldName(e.fromHoldName) + " into "
-                       + FormatHoldName(e.toHoldName) + ".";
-            case Kind::EnteredWilderness: {
+                line["from"] = FormatHoldName(e.fromHoldName);
+                line["to"] = FormatHoldName(e.toHoldName);
+                break;
+            case Kind::EnteredWilderness:
                 // Player was in a named location, now in wilderness
                 // within the same hold. Mention the location they
-                // departed from (not the hold — they haven't left it).
+                // departed from (not the hold -- they haven't left it).
                 // Fall back to the hold if the location name is empty
                 // for some edge case.
-                const std::string& origin =
-                    !e.fromLocationName.empty() ? e.fromLocationName : FormatHoldName(e.fromHoldName);
-                const char* verb = (e.fromInterior && !e.fromLocationName.empty()) ? "exited" : "departed from";
-                return party + " " + verb + " " + origin + " and " + PartyVerb(e.partyNames)
-                       + " now in the wilderness of " + FormatHoldName(e.fromHoldName) + ".";
+                line["origin"] = !e.fromLocationName.empty() ? e.fromLocationName : FormatHoldName(e.fromHoldName);
+                line["exited"] = e.fromInterior && !e.fromLocationName.empty();
+                line["hold"] = FormatHoldName(e.fromHoldName);
+                break;
+            case Kind::FastTravelArrived:
+                line["place"] = BestName(e.toLocationName, e.toHoldName);
+                line["interior"] = e.toInterior;
+                line["origin"] = BestName(e.fromLocationName, e.fromHoldName);
+                break;
             }
-            case Kind::FastTravelArrived: {
-                const std::string arriveName = BestName(e.toLocationName, e.toHoldName);
-                const std::string originName = BestName(e.fromLocationName, e.fromHoldName);
-                const char* arriveVerb = e.toInterior ? "entered " : "arrived at ";
-                std::string out = party + " " + arriveVerb + arriveName;
-                if (!originName.empty()) {
-                    out += ", having journeyed from " + originName;
-                }
-                out += ".";
-                return out;
-            }
-            }
-            return party + " travelled somewhere.";
+            return line;
         }
 
         // "travelled from X to Y" summary for non-net-zero runs. Uses
         // the run's front `from` and back `to` endpoints.
-        std::string RenderJourneySummary(const std::vector<InternalEvent>& run)
+        nlohmann::json JourneyLine(const std::vector<InternalEvent>& run)
         {
             const auto& first = run.front();
             const auto& last = run.back();
-            const std::string party = RenderParty(last.partyNames);
-            const std::string origin = BestName(first.fromLocationName, first.fromHoldName);
-            const std::string arrival = BestName(last.toLocationName, last.toHoldName);
-            if (origin.empty() && arrival.empty()) {
-                return party + " travelled a while.";
-            }
-            if (origin.empty()) {
-                return party + " ended up in " + arrival + ".";
-            }
-            if (arrival.empty()) {
-                return party + " set out from " + origin + ".";
-            }
-            return party + " travelled from " + origin + " to " + arrival + ".";
+            return {{"kind", "travel"},
+                    {"move", "journey"},
+                    {"party", Party(last.partyNames)},
+                    {"origin", BestName(first.fromLocationName, first.fromHoldName)},
+                    {"arrival", BestName(last.toLocationName, last.toHoldName)}};
         }
 
         // "visited X" summary for net-zero runs that touched one or
         // more interiors. Collects distinct interior names from the
-        // run (events where toInterior == true).
-        std::string RenderVisitSummary(const std::vector<InternalEvent>& run)
+        // run (events where toInterior == true). The caller only
+        // invokes it on runs that touched one, so `places` is never
+        // empty in practice; EventText words the empty case anyway.
+        nlohmann::json VisitLine(const std::vector<InternalEvent>& run)
         {
             std::vector<std::string> visited;
             for (const auto& e : run) {
@@ -664,27 +643,8 @@ namespace NarrativeEngine::TravelEventLog
                     visited.push_back(e.toLocationName);
                 }
             }
-            const std::string party = RenderParty(run.back().partyNames);
-            if (visited.empty()) {
-                // Shouldn't reach here — caller only invokes on runs
-                // where visitedInteriors is non-empty. Defensive.
-                return party + " looked around.";
-            }
-            if (visited.size() == 1) {
-                return party + " visited " + visited[0] + ".";
-            }
-            if (visited.size() == 2) {
-                return party + " visited " + visited[0] + " and " + visited[1] + ".";
-            }
-            std::string out = party + " visited ";
-            for (std::size_t i = 0; i + 1 < visited.size(); ++i) {
-                out += visited[i];
-                out += ", ";
-            }
-            out += "and ";
-            out += visited.back();
-            out += ".";
-            return out;
+            return {
+                {"kind", "travel"}, {"move", "visit"}, {"party", Party(run.back().partyNames)}, {"places", visited}};
         }
 
         // Retrieve the "netted zero" endpoint key for either side of
@@ -704,14 +664,13 @@ namespace NarrativeEngine::TravelEventLog
         // Convert an InternalEvent to a rendered JSON object per the
         // SkyrimNet-event shape.
         nlohmann::json ToJsonEntry(const std::string& slug,
-                                   const std::string& body,
+                                   nlohmann::json line,
                                    double localTime,
                                    double gameTime,
                                    const std::vector<std::string>& partyNames,
                                    double currentGameTimeSeconds)
         {
             const double delta = currentGameTimeSeconds - gameTime;
-            const std::string prefix = "[" + SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] ";
 
             nlohmann::json j;
             j["type"] = "travel_event";
@@ -720,7 +679,8 @@ namespace NarrativeEngine::TravelEventLog
             j["gameTime"] = gameTime;
             j["originatingActorName"] = partyNames.empty() ? std::string{} : partyNames.front();
             j["targetActorName"] = std::string{};
-            j["text"] = prefix + body;
+            j["age"] = SkyrimNetEvents::RelativeGameTime(delta < 0.0 ? 0.0 : delta);
+            j["line"] = std::move(line);
             return j;
         }
     } // namespace
@@ -748,12 +708,8 @@ namespace NarrativeEngine::TravelEventLog
             // into a condensable run.
             if (snapshot[i].kind == Kind::FastTravelArrived) {
                 const auto& e = snapshot[i];
-                out.push_back(ToJsonEntry("fast_travel_arrived",
-                                          RenderEventBody(e),
-                                          e.localTime,
-                                          e.gameTime,
-                                          e.partyNames,
-                                          currentGameTimeSeconds));
+                out.push_back(ToJsonEntry(
+                    "fast_travel_arrived", LineOf(e), e.localTime, e.gameTime, e.partyNames, currentGameTimeSeconds));
                 ++i;
                 continue;
             }
@@ -769,12 +725,8 @@ namespace NarrativeEngine::TravelEventLog
             if (runLen == 1) {
                 // Solo event — render as-is.
                 const auto& e = snapshot[i];
-                out.push_back(ToJsonEntry(KindSlug(e.kind),
-                                          RenderEventBody(e),
-                                          e.localTime,
-                                          e.gameTime,
-                                          e.partyNames,
-                                          currentGameTimeSeconds));
+                out.push_back(ToJsonEntry(
+                    KindSlug(e.kind), LineOf(e), e.localTime, e.gameTime, e.partyNames, currentGameTimeSeconds));
             } else {
                 // Run of 2+ — apply condensation.
                 std::vector<InternalEvent> run(snapshot.begin() + i, snapshot.begin() + j);
@@ -796,7 +748,7 @@ namespace NarrativeEngine::TravelEventLog
                 } else if (netZero && touchedInterior) {
                     const auto& last = run.back();
                     out.push_back(ToJsonEntry("travel_summary",
-                                              RenderVisitSummary(run),
+                                              VisitLine(run),
                                               last.localTime,
                                               last.gameTime,
                                               last.partyNames,
@@ -804,7 +756,7 @@ namespace NarrativeEngine::TravelEventLog
                 } else {
                     const auto& last = run.back();
                     out.push_back(ToJsonEntry("travel_summary",
-                                              RenderJourneySummary(run),
+                                              JourneyLine(run),
                                               last.localTime,
                                               last.gameTime,
                                               last.partyNames,
@@ -976,7 +928,7 @@ namespace NarrativeEngine::TravelEventLog
             h.localTime = item.event.localTime;
             h.inGameTimestamp = item.inGameTimestamp;
             h.sourceKind = std::string("internal/travel_event/") + std::string(KindSlug(item.event.kind));
-            h.body = RenderEventBody(item.event);
+            h.body = EventText::Body(Localization::English(), LineOf(item.event));
             out.push_back(std::move(h));
         }
         return out;

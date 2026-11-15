@@ -5,6 +5,7 @@
 #include <PhaseTracker.h>
 #include <PlotAwareness.h>
 #include <PlotState.h>
+#include <RunChecks.h>
 #include <SkyrimNetAPI.h>
 
 #include <functional>
@@ -17,6 +18,7 @@ namespace NarrativeEngine::Decorators
         constexpr const char* kTensionName = "ne_narrative_tension";
         constexpr const char* kPhaseName = "ne_narrative_phase";
         constexpr const char* kPlotAwarenessName = "ne_plot_awareness";
+        constexpr const char* kRenderCheckName = "ne_render_check";
 
         constexpr const char* kTensionDescription = "NarrativeEngine: most recent Director tension score, "
                                                     "rendered as a decimal string in the range 0..100. "
@@ -27,9 +29,20 @@ namespace NarrativeEngine::Decorators
                                                   "Ignores the actor argument.";
 
         constexpr const char* kPlotAwarenessDescription =
-            "NarrativeEngine: the plot this actor is in, in the second person: as its mastermind, "
+            "NarrativeEngine: the plot this actor is in, as a JSON record: as its mastermind, "
             "the scheme and every step of it; as an agent, the errand they were sent on. "
             "Empty for an actor in no plot.";
+
+        constexpr const char* kRenderCheckDescription =
+            "NarrativeEngine: the dashboard's render check, as a JSON record with one sentinel field, while the "
+            "check runs; empty otherwise. Ignores the actor argument.";
+
+        // On SkyrimNet's render thread, like PlotAwarenessCallback; RunChecks
+        // keeps its record under its own lock.
+        std::string RenderCheckCallback(RE::Actor* /*ignored*/)
+        {
+            return RunChecks::DecoratorRecord();
+        }
 
         std::string TensionCallback(RE::Actor* /*ignored*/)
         {
@@ -50,10 +63,18 @@ namespace NarrativeEngine::Decorators
         // published snapshot is the one piece of plot state any thread may
         // read. The actor's base is a field read, the same one SkyrimNet makes
         // to render the rest of their prompt.
+        //
+        // The record goes out as JSON text, which SkyrimNet parses back into
+        // an object for the template; an empty answer stays the empty string
+        // the template tests for.
         std::string PlotAwarenessCallback(RE::Actor* actor)
         {
             const auto* base = actor != nullptr ? actor->GetActorBase() : nullptr;
-            return base != nullptr ? PlotAwareness::Describe(*Plots::Snapshot(), base->GetFormID()) : std::string{};
+            if (base == nullptr) {
+                return {};
+            }
+            const auto record = PlotAwareness::Describe(*Plots::Snapshot(), base->GetFormID());
+            return record.is_null() ? std::string{} : record.dump();
         }
 
         void RegisterOne(const std::string& name,
@@ -82,5 +103,6 @@ namespace NarrativeEngine::Decorators
         RegisterOne(kTensionName, kTensionDescription, &TensionCallback);
         RegisterOne(kPhaseName, kPhaseDescription, &PhaseCallback);
         RegisterOne(kPlotAwarenessName, kPlotAwarenessDescription, &PlotAwarenessCallback);
+        RegisterOne(kRenderCheckName, kRenderCheckDescription, &RenderCheckCallback);
     }
 } // namespace NarrativeEngine::Decorators

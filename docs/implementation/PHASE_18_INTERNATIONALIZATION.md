@@ -1,0 +1,3028 @@
+# Phase 18 — Internationalization
+
+NarrativeEngine plays in the language Skyrim is running in. It detects the game's language at startup, renders
+every string a player can see from a plain-text language file, and asks the LLM to write player-facing content in
+that language. Nothing about which language is active changes how the simulations decide what happens.
+
+> **Doc status: planned, not started.** The design is settled and the implementation plan is written: Steps 1–30.
+> Twenty-eight are `[CLAUDE]`; the two `[USER]` steps come last and each is one button press. The questions the first
+> draft left open have all been answered by investigation; what each one found is recorded under **Resolved
+> questions**, and the design already reflects them.
+
+---
+
+## Why this phase exists
+
+The README currently tells players not to edit our prompts to get another language, and that the dashboard and
+some event text are English-only. Both are true, and the first is the bigger problem. The plot, gossip and beat
+simulations read the model's output back and act on it: they match names against menus, check that a scheme opens
+with a verb, refuse text naming the Dragonborn, and slot LLM phrases into English sentence templates. A player who
+translates the prompts gets German text spliced into English templates, validators that reject correct German, and
+no way to tell which is happening.
+
+Doing this properly takes two kinds of work, and the cleanup has to come first:
+
+1. **Cleanup.** Every sentence C++ composes for an LLM moves into a prompt file, and every sentence C++ composes for
+   a player or for persistence moves into a language file. This is worth doing even in English: prompt wording
+   becomes editable without a rebuild, and text that is stored becomes text a translator can reach.
+2. **Features.** Detect the language, load the matching file, render through it, and add an output-language line to
+   the prompts whose output a player reads.
+
+---
+
+## Scope
+
+### In scope
+
+- Detecting the game's language through CommonLibSSE-NG, plus a settings override.
+- One UTF-8 plain-text language file per language. English is the reference and the fallback for any missing key.
+- A template formatter with placeholders, gender select, plural select and list joining.
+- Moving every C++-composed sentence out of C++. LLM-bound prose goes to prompt files, and player-visible or
+  persisted prose goes to language files.
+- An output-language line in every prompt that produces content.
+- Making the validators that read content language-aware: word lists move to the language file, and byte-level
+  character tests are replaced with UTF-8-aware ones.
+- Every player-visible surface: SkyrimNet memories and events, letter titles and item text, debug notifications,
+  the MCM page, and the PrismaUI dashboard.
+- Machine-drafted language files for every official Skyrim SE language, shipped and marked unreviewed.
+- Declaring the shipped languages in `manifest.json`, so SkyrimNet's plugin hub lists them.
+
+### Out of scope
+
+- **Translating prompt instructions.** Prompts stay English (see **Prompts stay English** below).
+- **Our own log files.** `NarrativeEngine.log`, the plot, gossip and visitor traces, and
+  `NarrativeEngine_EventHistory.log` are developer diagnostics, and they stay English.
+- **SkyrimNet's rendering of our `manifest.json` and `settings/NarrativeEngine.yaml`.** SkyrimNet shows those
+  strings verbatim in its own UI and offers no locale hook. This is a known gap, and the README should say so.
+- **Retranslating history.** Memories and events already written stay in the language they were written in.
+- **Noun declension.** Names are inserted in their nominative form. Translators phrase templates so that the
+  name never needs a case ending.
+- **Fonts.** Which glyphs render is decided by the game's font configuration, not by us. We detect a mismatch and
+  say so (see **Fonts** under **Encoding**), but we do not ship or switch fonts.
+
+---
+
+## Design
+
+### Every string belongs to exactly one of three audiences
+
+The whole design rests on one classification. Each string the plugin produces, and each field an LLM returns, is
+exactly one of the following:
+
+| Class          | Who reads it                                         | Lives in                | Language                          |
+| -------------- | ---------------------------------------------------- | ----------------------- | --------------------------------- |
+| **Prompt**     | Only an LLM, never shown and never persisted         | `.prompt` files         | English                           |
+| **Content**    | A player can read it, or it is persisted             | Language file           | The active language               |
+| **Token**      | Only code: ids, enum values, keys, EditorIDs         | C++ or data INIs        | None; never shown raw             |
+
+Three rules settle the cases on the boundaries:
+
+- **Persisted counts as visible.** Anything written to SkyrimNet's memories or event history is content: the
+  player can open it in SkyrimNet's UI, and NPC dialogue quotes it back to them. Anything written to the co-save
+  that a surface later shows is content.
+- **An LLM output field takes the class of where it ends up.** For example, a letter's `body` is content, its
+  `mood` is a token (it is checked against a closed set), and a visit's `briefing` is a prompt if nothing but the
+  conclusion poll reads it. The table that classifies each field is the contract the output-language line is
+  written from.
+- **Tokens are never shown raw.** If the dashboard currently shows `RisingAction` or a beat id, the label comes from
+  the language file and the id is only the key.
+
+This classification also answers the README's warning. Code that parses LLM output only ever parses tokens, and
+tokens are not translated. The only thing the active language changes is the content that reaches the player.
+
+### Language detection and selection
+
+**Detection.** The game's language is `sLanguage:General`, read through
+`RE::INISettingCollection::GetSingleton()->GetSetting("sLanguage:General")` on the main thread at `kDataLoaded`.
+The SE launcher knows exactly nine tokens: `english`, `french`, `german`, `italian`, `spanish`, `polish`, `russian`,
+`japanese` and `chinese`. Chinese is Traditional; there is no Simplified variant. Case varies in the wild
+(`Skyrim_Default.ini` ships `ENGLISH`, and hand-edited `polish` works), and the game's own file lookups ignore it, so
+we compare case-insensitively. Our file stem is the token in lowercase.
+
+**Override.** A new setting, `[Localization] sLanguage`, empty by default. When it is set, it names a language file
+stem, whether or not Skyrim ships that language. That covers languages such as Portuguese or Czech, where the game
+itself usually runs in English. It lives in the plugin INI and the MCM overlay like every other setting. The MCM
+offers *Auto* plus the shipped languages as a fixed dropdown, and the INI accepts any stem.
+
+**Resolution** goes override, then detected language, then `english`, and the first one with a loadable file wins.
+The log records the detected language, the override, and the result.
+
+**Fixed for the session.** The language is resolved once at `kDataLoaded`. A changed override takes effect at the
+next game launch. Switching mid-session would split one session's content between two languages for no benefit,
+since history is frozen in whatever language wrote it anyway.
+
+### Language files
+
+**Location and format.** The files live at `Data/SKSE/Plugins/NarrativeEngine/Languages/<stem>.ini`, encoded in
+UTF-8, and are read with SimpleIni. SimpleIni is already a dependency, its sections map well onto subsystems, and
+its `<<<END` heredoc syntax handles the few multi-line templates. INI is also what our other data files use, so a
+player who has edited one has edited them all.
+
+**Header.**
+
+```ini
+[Language]
+Name = German          ; the English name, used in the output-language line
+NativeName = Deutsch   ; shown in the MCM and the dashboard
+Code = de              ; bare ISO 639-1, the form SkyrimNet uses for every language setting
+Status = draft         ; draft | reviewed
+PluralRule = one_other ; selects a built-in CLDR plural-rule family
+Fonts = en             ; the vanilla font sets whose glyphs cover this language (see Fonts, under Encoding)
+```
+
+**Two names for one language, for two systems.** The file stem is Skyrim's `sLanguage` token, because that is what
+detection reads. `Code` is the ISO 639-1 code, because that is what SkyrimNet uses: in its plugin manifests, its
+dashboard's UI language, and its TTS and speech-recognition settings. SkyrimNet normalizes regional forms
+(`en-US`) down to the bare code, and so do we. Carrying the code now costs one line per file. It gives us a ready
+answer if SkyrimNet ever exposes a language setting of its own, and the manifest needs it (see **Draft
+translations**).
+
+**Grammar settings.** Everything English-specific that the current helpers hard-code becomes a per-language value:
+
+```ini
+[Grammar]
+ListSeparator = ", "
+ListPairSeparator = " und "
+ListFinalSeparator = " und "
+CapitalizeSentenceStart = true
+PhraseLowercaseFirst = false   ; English lowercases a scheme's first letter; German must not
+IndefiniteArticle =            ; empty: no automatic article; templates phrase around it
+IndefiniteArticleBeforeVowel =
+```
+
+**Keys** are `[Subsystem.Area] key = template`, for example `[Plot.Memory] watch.agent_dispatched = …`. Code
+never names a key with a string literal. Each key is declared once in a C++ table, together with its placeholder
+signature, so a mistyped key fails to compile and the formatter knows which arguments each template takes.
+
+The one exception is `[Dashboard]`, whose keys only the dashboard's TypeScript names. C++ never renders them, so a C++
+declaration would be a second list to keep in step, and it would catch no typo the TypeScript makes. English's file
+declares them instead. Its `[Dashboard]` keys are the section's keys, and each key's placeholders are the ones its
+English template uses: a number where English pluralizes it, a list where English joins it, text otherwise. A
+translation is validated against that like any other key, and falls back to English the same way.
+
+**Fallback is per key.** When the active file is missing a key, or the key fails validation, that key renders from
+English. The file still loads. A load census logs, once per session, how many keys fell back and why, the way the
+plot census reports rejections.
+
+**Player edits live in an overlay.** `Languages/<stem>.custom.ini` is never shipped. When it exists, it is read after
+the shipped file and overrides it key by key, under the same validation. A rejected overlay key falls back to the
+shipped key, not straight to English. A mod update replaces the shipped file and never touches the overlay, so a
+player who rewords one template keeps that one line through every update, and still receives every other fix. The
+census reports how many keys the overlay supplied, and names any overlay key that matches no declared key, since
+that is almost always a typo that would otherwise look like a rule in force.
+
+**Validation at load.** A translated template that references a placeholder its English counterpart does not have,
+or whose select or plural is malformed, or that lacks an `other` branch, is rejected and falls back to English.
+English itself is validated by a unit test: every declared key is present, and every placeholder matches its
+declaration. Every shipped file is loaded by the same test, which asserts zero rejections.
+
+### The template formatter
+
+The formatter replaces `PlotVerbs::Render`, generalizing it. It is pure, has no engine dependency, and is
+unit-tested like `CharacterBioResolver`. Its syntax is a small subset of ICU MessageFormat, so anyone who has
+localized software before will recognize it:
+
+| Form                                           | Meaning                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| `{agent}`                                      | The argument's text; a person argument renders as their name  |
+| `{agent, select, female {…} male {…} other {…}}` | On a person, selects on their sex; on text, on its value      |
+| `{count, plural, one {# Tag} other {# Tage}}`  | CLDR plural category of a number; `#` is the number           |
+| `{names, list}`                                | Joins a list with the language's separators                   |
+| `{scheme, phrase}`                             | Applies the language's phrase rules (e.g. `PhraseLowercaseFirst`) |
+
+Arguments are typed: **text**, **person** (a name plus a sex from `TESNPC`), **number**, or **list**. Unfilled
+arguments render the existing fallbacks ("someone", "somewhere", "something"), which become language-file keys
+themselves.
+
+**Plural rules are code, not text.** CLDR's cardinal rules are arithmetic, and a file should not have to express
+them. The formatter carries the rule families the shipped languages need: none for Japanese and Chinese,
+one/other for English and German, Spanish's 1-is-one rule for Spanish and Italian, the French 0-or-1 rule, and the
+Russian and Polish one/few/many rules. In CLDR, Spanish, Italian and French also call an exact million (1,000,000,
+2,000,000 and so on) `many`, so those two families do too. A language file selects one by name. A new language picks
+the family that matches it.
+
+**Character handling comes from utf8proc.** Sentence capitalization and `PhraseLowercaseFirst` currently use
+byte-level `toupper`/`tolower`. Those silently do nothing to `é` or `ж`. Case mapping, case folding, UTF-8
+validation and the character categories word splitting needs come from
+[utf8proc](https://github.com/JuliaStrings/utf8proc). It is a small C library (MIT, in vcpkg, maintained by the
+Julia project) covering all of Unicode, not a hand-built table for a few blocks. Scripts without case pass through.
+
+A full MessageFormat implementation was considered and rejected. ICU is the only serious one. vcpkg's ICU carries
+about 30 MB of data. Windows' own `icu.dll` costs nothing to ship, but it exposes only ICU's C API, whose message
+formatting takes numbered arguments (`{0}`), not named ones. And Wine did not provide it until recently, which
+matters for players on Proton. The subset above is a few hundred lines, and its plural families are thirty lines of
+arithmetic.
+
+**No escaping.** A literal brace in a template is a load error. None of the English text needs one, and a syntax
+for escaping is complexity a translator should not have to learn.
+
+**Threading.** The table is loaded once on the main thread at `kDataLoaded`, before any worker thread starts, and is
+immutable afterwards. Reads take no token and no lock. This is the precedent `Settings::Get()` already sets for
+configuration that every thread role reads.
+
+### Prompts stay English
+
+The prompt instructions are not translated. Models follow English instructions most reliably, and our prompts are
+tuned against English behavior. Keeping one version of each prompt means a fix lands once instead of nine times.
+The prompts stop containing anything a translator has to touch. What changes is where their prose lives.
+
+**No LLM-bound prose in C++.** C++ hands prompts structured data, and the prompt file renders it. The current
+offenders, grouped by what replaces them:
+
+| Today in C++                                                               | After                                                                                        |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Beat `Description()` strings (ambush, letter, visit)                       | One prompt file per beat under `components/narrative_engine/beats/`, rendered by name        |
+| Rejection and retry sentences (`PlotBirthParse`, `PlotCandidates`)         | `retry: {code, args}`; each prompt renders the codes it can receive                          |
+| Decision option lines and purposes (`PlotPlanning`)                         | Structured fields (step number, verb, slots); the decision template phrases them             |
+| `GossipContent::BandLengthSpec`                                            | `lo`/`hi` integers; the seed prompt phrases the range                                        |
+| The event timeline (`SkyrimNetEvents`, combat, weather and travel renderers) | Structured events (`kind` plus fields); a shared prompt include renders each kind           |
+| `FormatRelativeGameTime`                                                    | A pre-bucketed `{value, unit}`; the include phrases it                                       |
+| `PlotVerbs` menu lines and plan sketches fed to plot prompts               | Verb id plus filled slots; a shared plot-verbs include phrases each verb                     |
+| `PlotAwareness` paragraph from the `ne_plot_awareness` decorator            | The decorator returns JSON; the `0300_ne_plot_awareness` submodule words it                  |
+| `DecisionProbe` fixed sentences                                             | Its prompt file                                                                              |
+
+Aggregation stays in C++. Condensing a run of hits into "A and B trade blows" is a decision about structure, so
+C++ emits a condensed record, and the prompt decides how to word it.
+
+**Two SkyrimNet mechanisms make this possible, and both are established, not assumed:**
+
+- **A decorator can return structure.** SkyrimNet parses a C++ decorator's returned string as JSON, and falls back
+  to the plain string when it does not parse. That fallback is why today's prose-returning `ne_plot_awareness` works.
+  So the decorator returns the mastermind's or agent's plot as fields, and the submodule indexes into them
+  (`{% set pa = ne_plot_awareness(npc.UUID) %}` … `pa.scheme`) and writes the sentences.
+- **A template name can be computed.** SkyrimNet's Inja evaluates function arguments as expressions, and `+` joins
+  strings inside them, so `action_select` renders each beat's description with
+  `render_template("components\\narrative_engine\\beats\\" + cand.name)`, guarded by `prompt_file_exists`. Paths
+  resolve through the layer stack like any other template path. The beat files must **not** live under
+  `submodules/`, because SkyrimNet injects every file there into every assembled prompt.
+
+The beat descriptions get an incidental improvement from the move. They can now use `{{ player.name }}`, which
+[`CUSTOM_PROMPTS.md`](../CUSTOM_PROMPTS.md) currently says a C++ string constant cannot.
+
+**Data files are not hard-coding.** Text a prompt reads from a plain-text data file, such as `AttackerGroups.ini`'s
+`Flavor`, already satisfies the goal of nothing hard-coded, and it stays where it is. So does memory text read back
+from SkyrimNet, and character bios.
+
+**Rejection text in our logs.** Once retry sentences move to prompts, `PlotLog` records the rejection code and its
+arguments instead of an English sentence. That avoids keeping a second English copy of every rejection.
+
+### The output-language line
+
+Every prompt with a content field gets a line naming those fields and the language, from a shared include:
+
+```jinja
+{% if output_language != "English" %}
+Write {{ content_fields }} in {{ output_language }}. Every other field keeps the exact values described above.
+{% endif %}
+```
+
+C++ sets `output_language` from the header's `Name` in every content-producing context. The line is omitted for
+English, so English prompts stay byte-identical to today's and need no re-tuning. Naming the token fields as
+unchanged matters as much as naming the content fields. A model told only "write in German" will translate `mood`
+too.
+
+The map of prompts to content fields, confirmed in Step 19 by tracing each field to where it ends up:
+
+| Prompt                    | Content fields                                                  | Token fields stay                                                        |
+| ------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `letter_compose`          | `body` (the letter), `letter_label` (its title)                 | `mood`, `topic_tag`, `tags` (memory tags)                                |
+| `visit_compose`           | `narration` (spoken via `DirectNarration`)                      | `briefing` (the visitor's instructions, which only SkyrimNet's model reads), `mood`, `topic_tag` |
+| `gossip_seed`             | `bands` (each becomes a memory)                                 | —                                                                        |
+| `plot_ambition`           | `ambition`, `scheme`, `finish`                                  | `reasoning`, `goal`, every `roles` key, and its values (menu names)      |
+| `action_select`           | `narrative_note` (the dashboard's decision log), the ambush's `narration_prose` | `action`, every id parameter                             |
+| `story_eval`              | `narrative_note` (the dashboard's decision log)                 | `tension_score`                                                          |
+| Decisions, `plot_cast`, `gossip_eval`, `visit_conclusion_poll` | none                       | all                                                                      |
+
+Two corrections came out of the tracing. `action_select`'s `narrative_note` is content, because it is kept in the
+decision log and shown on the dashboard, like `story_eval`'s. And the visit's spoken field is `narration`, while
+`briefing`, which the provisional table did not list, is a token-side field: it goes only to the visitor's SkyrimNet
+action, as instructions its own model reads, and the dashboard previews it for debugging. `topic_tag` also shows on
+the dashboard's letter and visit cards, but it is a memory tag, and tags stay English.
+
+**Memory tags are tokens, LLM-written or not.** SkyrimNet embeds only a memory's `content` for retrieval. Its
+keyword score reads `content` too. Tags are used for exact include/exclude filtering and are printed verbatim beside
+each retrieved memory, but they never reach the embedding. So the letter's facet tags stay English like our own
+`ne_gossip` and `narrative_engine_plot`, and the language that retrieval actually depends on is the language of
+`content`, which is the player's.
+
+**Templates constrain the content's shape, so the language file states the shape.** `scheme` is spliced into
+"my plan to {scheme}". English needs a bare verb phrase there ("steal the amulet"), and German needs a *zu*-clause
+("das Amulett zu stehlen"). So the language file carries the form each spliced field must take, and C++ passes it
+into the context:
+
+```ini
+; german.ini
+[Prompt.Form]
+scheme = an infinitive clause ending in "zu" plus the verb, e.g. "das Amulett zu stehlen"
+
+; japanese.ini
+[Prompt.Form]
+scheme = a verb phrase ending in the plain dictionary form, e.g. "アミュレットを盗む"
+```
+
+This is the one place language-file text reaches a prompt. It belongs in the language file because the template it
+has to fit is in the language file. A translator who rewrites the template is the person who knows what shape its
+slot needs.
+
+`[Prompt.Form]` is read only from the language's own file and its overlay, never from English, for the same reason
+`[Matching]` falls back per check: English's form describes an English phrase, and asking for that shape in German
+would be wrong. A language with no form for a field gives the model none. English, whose line is never rendered,
+needs none at all. Of today's content fields only `scheme` is spliced into the middle of a template; the others are
+quoted whole after a colon, where any sentence fits.
+
+### Validators that read content
+
+Five validators inspect content, and each is English in two ways. One is its word lists. The other is *where* it
+looks, which is English word order. Moving the lists to the language file is not enough by itself:
+
+| Validator                        | What it guards                                                  | Where it looks, in English                                                     |
+| -------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `PlotBirth::SchemeOpensWithVerb` | A scheme reads as an instruction inside "my plan to {scheme}"   | The start: a pronoun, article or "to" first, or a modal ("is", "plans") second |
+| `PlotStepParse::NamesThePlayer`  | No plot text names the player                                   | Anywhere: "dragonborn" as a whole word; the player's name split on spaces      |
+| `EngineUtils::IsGhostRecord`     | Apparitions the ghost flag misses stay out of plots             | The end: "ghost" as a display name's last word ("Dunmer Ghost")                |
+| `LetterComposer` title stripping | A sender's name fits the 24-character fallback title            | The start for titles ("Jarl", "Thane", …); after the last " the " for epithets |
+| `PlotBirthParse::SameLine`       | A scheme is not a repeat, or a restatement of the ambition      | Whole line, folding case on ASCII only                                         |
+
+The first check is worth reading closely. It never detects a verb, even in English. It rejects openings that are
+known not to be verbs. What it actually guards is the *shape* the template slot needs, and every language has that
+shape. What changes is where the giveaway sits: at the start in English, at the end in Japanese, and at the end in
+German as well, where a *zu*-clause puts the verb last.
+
+**So each check is described per language, in one shared vocabulary.** Every check in `[Matching]` takes up to four
+lists, keyed by position:
+
+| Key suffix       | Passes when                                                |
+| ---------------- | ---------------------------------------------------------- |
+| `.Reject.Start`  | the text does not begin with any entry                     |
+| `.Reject.End`    | the text does not end with any entry                       |
+| `.Require.Start` | the text begins with at least one entry, if any are listed |
+| `.Require.End`   | the text ends with at least one entry, if any are listed   |
+
+A detector such as the ghost test or the player-title test uses `.Match.Start`, `.Match.End` and `.Match.Anywhere`
+instead, and fires when any entry matches.
+
+An entry is a sequence of word patterns separated by spaces, and `*` inside a pattern stands for any letters. So
+`* is` means "any word, then *is*", which is how the English second-word modal rule is written without a separate
+"second word" position. `drachenblut*` matches the inflected *Drachenbluts* too. A language whose script does not
+separate words with spaces (`[Grammar] WordSeparated = false`, which applies to Japanese and Chinese) matches each
+entry as a character sequence at that position.
+
+The scheme check in three languages:
+
+```ini
+; english.ini
+Scheme.Reject.Start = he, she, they, it, i, we, you, his, her, the, a, an, this, that, to, * is, * plans, * wants
+
+; german.ini -- "das Amulett zu stehlen", or "das Paket abzuholen" with zu inside a separable verb
+Scheme.Require.End = zu *, *zu*
+
+; japanese.ini -- a plain-form verb phrase such as "アミュレットを盗む"
+Scheme.Require.End = う, く, ぐ, す, つ, ぬ, ぶ, む, る
+Scheme.Reject.End = ます, です, た, だ
+Scheme.Reject.Start = 彼は, 彼女は, 彼らは, 私は
+```
+
+The other checks need the same treatment:
+
+- **The player's title** lists that language's own term: `ドラゴンボーン` matches anywhere in unseparated text, and
+  `drachenblut*` covers German's case endings. **The player's name** splits on the language's name separators:
+  a space, plus `・` for Japanese. The three-character minimum counts code points, not bytes. A two-letter Cyrillic
+  name is four bytes and passes today when it should not.
+- **The ghost test** looks where the language puts the noun: `.Match.End = ghost` for English, but
+  `.Match.Start = fantôme, spectre` for French, and `.Match.Anywhere = *geist` for German, where it compounds.
+- **Title stripping** keeps its prefix list (`Title.Strip.Start`), and its epithet separator becomes a list
+  (`Title.Strip.After = the` for English, `le, la` for French, `der, die, das` for German). The 24-character budget
+  is computed from the localized "Note from" prefix, not from a constant derived from the English one.
+- **`SameLine`** needs no language data, only the formatter's UTF-8 case folding.
+
+**These are heuristics, not grammars.** `*zu*` also accepts "das Geld zurück", which has no verb. The rules exist
+to catch the malformations models actually produce, and the plot census is what judges whether a language's rules
+are good enough. That is also how the drafts get tuned: the language trial (see **The language trial**) reports
+rejection rates per check, for each language, against an English baseline.
+
+**The prompt form and its check are a pair.** `[Prompt.Form]` tells the model what shape a slot needs, and
+`[Matching]` verifies that it got that shape. A translator who rewrites "my plan to {scheme}" updates both together,
+and the two keys sit side by side in each file so that one is not changed without the other.
+
+**Turning a check off is a deliberate act.** If no list can express a check's shape in some language, the file says
+so explicitly, with a reason: `Scheme.Disabled = <why>`. The load census names every disabled check. A unit test
+fails if a shipped file leaves a check with neither rules nor a `Disabled` entry, so a gap is never silent.
+
+`[Matching]` uses the game's own terms for its language, and those terms can be looked up. The Spriggit export
+carries every localized string in all nine languages, not only English. `Book3ValuableDragonborn`'s name alone gives
+the player's title in each: *Drachenblut*, *Enfant de dragon*, *Sangre de Dragón*, *Sangue di Drago*, *Smocze
+Dziecię* (inflected *Dziecięcia*), *Драконорожденный* (inflected), *ドラゴンボーン* and *龍裔*. Several are multi-word
+and two inflect, which is why entries are word sequences with stem patterns. Every `[Matching]` term in a draft
+cites the record it was taken from, so a reviewer can check it, and no draft invents a term the game does not use.
+
+### Names are tokens in the player's script
+
+When the model fills a plot role, it writes a person's name, and code matches that name against the population.
+The classification makes those names tokens: they come from the game, and the model copies them. They are not
+translated. But they are written in the player's script, and the two matchers that read them assume ASCII. This
+is the one class of misparse the classification does not prevent by itself:
+
+- **`PlotCandidates::Closest`** splits text into words on ASCII `isalnum`, and counts only words whose first byte
+  is an ASCII capital. Every byte of a Cyrillic, Japanese or Chinese name is non-ASCII, so such a name splits into
+  no words at all. Every role in a Russian, Japanese or Chinese plot would resolve to "names nobody in Skyrim", and
+  every plot birth would be rejected. Accented Latin degrades rather than fails: *Jörgen* splits into *J* and *rgen*.
+- **`PlotCasting::ContainsWord`** decides whether a step's text names a person, so that the person a step is
+  *about* is not cast to carry it out. It allows for one inflection, the English possessive (*Veleth's*). German
+  writes the genitive without an apostrophe (*Veleths Bewegungen*), and Russian and Polish change the ending
+  (*Ульфрика*). In those languages the exclusion misses, and the bug this check was written to fix (Captain Veleth
+  cast to shadow Captain Veleth) comes back.
+
+The fix is the same UTF-8 handling the formatter needs. Words split on Unicode whitespace and punctuation. "Begins
+with a capital" applies in cased scripts, and every word counts in caseless ones. In a language with
+`WordSeparated = false`, a whole menu name is matched as a substring, since there are no word boundaries to match
+on. The endings a name may carry and still be the same person become a `[Matching]` list
+(`Name.Suffixes = 's` in English; `s` in German; the case endings in Russian and Polish). `NamesThePlayer`'s
+player-name half uses the same splitter and the same suffix list.
+
+These matchers resolve EditorID-keyed data elsewhere (`GossipFactions.ini` matches EditorIDs, which are never
+localized), so this concerns only text the model wrote.
+
+### Persisted text
+
+**Rendered when written, then frozen.** A SkyrimNet memory or event is rendered once, in the active language, and
+never changes. Changing language mid-playthrough leaves earlier history in the earlier language. That is
+acceptable: NPC dialogue copes with mixed-language memories better than it would cope with memories that had been
+rewritten.
+
+**The co-save stores structure where the structure already exists.** C++-composed text that is saved today and
+could be re-rendered from saved fields stops being saved:
+
+- A plot's `concession` sentence is rendered from its scheme when shown.
+- `DecisionLog` failure reasons become a code plus arguments.
+- `CombatEventLog`'s damage-source labels ("poison", "a trap") become an enum.
+- `TravelEventLog`'s "The Player" party fallback becomes a flag.
+
+LLM-written text stays saved as text, since it has no structure to re-render from. The affected records bump their
+versions. Per the save-compatibility rule, nothing migrates until 1.0.0.
+
+**Content that is persisted moves to the language file**, including the debug and test-plot literals the dashboard
+seeds (`PlotTestPlots`, the debug plot in `PlotState`). They are saved and written to memories like any other plot.
+
+### The `PlotVerbs` table splits by audience
+
+The 24-verb table currently serves three audiences from one struct. Under the classification it splits:
+
+- **Memory templates** (the nine first-person memories per verb, each slot's `remembers` lines, and the plot-level
+  succeeded, failed and conceded lines) are content, and move to `[Plot.Memory]`.
+- **The dashboard line and caption** are content, and move to `[Plot.Dashboard]`.
+- **Menu lines, plan sketches, slot `says` text and the task phrases** fed to plot prompts are prompt text, and
+  move to the plot-verbs prompt include.
+
+What stays in C++ is the part that was never text: the verb ids, slot names, slot kinds, and per-verb traits.
+
+### Data INIs keep their text as the default
+
+`PlotFactions.ini`'s `DisplayName`, `PlotItems.ini`'s phrases and `AttackerGroups.ini`'s `DisplayName` are content,
+because they reach plot memories and the dashboard. They stay in their data files as the default text. A language
+file can override any of them by id (`[Data.Faction] college_of_winterhold = das College von Winterfeste`). Modded
+factions and items are first-class, so a modder who adds a row should not have to touch nine language files for it
+to work. The row works immediately, in its own words, and translators can catch up when they get to it.
+
+`PlotRecipes::Phrase`'s "a sheaf of {}s" and its a/an choice become `[Plot.Item]` templates. Articles come from
+`[Grammar]`, and languages that cannot pick an article without a noun's gender leave it empty.
+
+### Player-visible surfaces
+
+**SkyrimNet memories and events.** These are the letter-sender memory, gossip's heard and told lines, every plot
+memory, and the visit walk-out, valediction and re-engage narrations. Each becomes a language-file template.
+
+**Letters.** The fallback title "Note from {sender}" and its stripping lists move to the language file. A book
+title is capped by the engine at **24 characters**. Today's code counts that cap in bytes, which is the same thing
+only for ASCII: it would hold a Russian title to 12 letters and a Japanese one to 8. The cap is counted in code
+points, both where the LLM's `letter_label` is checked and in the fallback, and truncation lands on a code-point
+boundary. The prompt states the limit in characters, as it already does. The ESP's item-card text, "A sealed
+letter.", is served from the language file through the same description hook that already supplies the body. The
+ESP's other book text is placeholder that never displays.
+
+**Debug notifications.** The four `[NE]` notices become `[Notify]` templates.
+
+**MCM.** `config.json` switches to `$NE_…` keys. MCM Helper resolves those through
+`Interface/Translations/NarrativeEngine_<LANGUAGE>.txt` (UTF-16 LE, `$KEY<TAB>text`), which is the format it
+requires. Those files are the MCM's language files, shipped for every language. There are about fourteen strings
+in each, and nothing generates them. Skyrim picks that file by the *game's* language, not by our override, so a
+player who overrides Portuguese on an English install gets an English MCM. That is a documented limitation. Nor
+does MCM Helper fall back to English: a game language with no file of ours shows the raw `$NE_…` keys, so every
+language we ship ships its MCM file too.
+
+The page's *Language* menu writes `[Localization] sLanguage`. An MCM Helper menu stores the option it shows, so each
+option is a translation key, `$NE_Language_<stem>`, which every language's MCM file words as the language's own name.
+*Auto* is `$NE_Language_Auto`. `Localization::Resolve` reads the stem out of that form and takes *Auto* as no
+setting, and a stem written by hand still works.
+
+**Dashboard.** The TSX holds keys, not English. C++ sends the `[Dashboard]` section as a string table with every
+state. The dashboard formats through a TypeScript port of the same formatter subset, and both
+implementations run a shared fixture of template, arguments and expected output, so they cannot drift. The port
+takes plural categories from the browser's own `Intl.PluralRules`. Ultralight, which PrismaUI runs on, bundles ICU
+data and its `WebCore.dll` carries `Intl.PluralRules`. If `Intl` turns out to be missing at runtime, every plural
+renders its `other` branch and the status banner says so, so the dashboard never fails to render. List joining does
+**not** use `Intl.ListFormat`, because the separators must be the language file's own, overlay edits included. C++ sends
+ids for anything the dashboard labels itself (phases, beat names, outcomes), and pre-rendered text for content it
+already rendered (plot step lines, gossip bands, letter bodies). `<html lang>` follows the active language.
+
+### Encoding
+
+**Write UTF-8 everywhere.** Every official SE string table is UTF-8, in all nine languages and English included.
+That was measured by decoding every `STRINGS`, `DLSTRINGS` and `ILSTRINGS` file in the base Interface archive, which
+an English install ships for all nine languages, and found zero invalid strings. The SE Polish tables are not the
+LE-era custom 1250 encoding UESP describes. The engine keeps a string's bytes as given, and Scaleform reads `char*`
+text as UTF-8 (CommonLibSSE-NG's `GFxMovie::SetVariable` documents it). So `SetFullName`, book text, Papyrus
+strings, notifications and the dashboard all take UTF-8. Language files and SkyrimNet's API are UTF-8 already.
+
+**Validate what we read back.** A form name read from the engine is usually UTF-8 but need not be. Non-localized
+plugins written by ANSI tools can carry Windows-1252 bytes, which the engine hands back unchanged; that is what
+`CharacterBioResolver::RepairWindows1252` (mirrored from SkyrimNet) repairs. Any name that enters a template or a
+matcher goes through UTF-8 validation and that repair first. Our own output never needs it, because the sanitizer
+already drops invalid sequences.
+
+**Fonts.** The glyphs available are those of the font set named by `sFontConfigFile` in `[Fonts]`. The launcher
+writes it alongside `sLanguage`, and an English install ships every language's font set:
+
+| Font set   | Covers                                                                 | Used by                                   |
+| ---------- | ---------------------------------------------------------------------- | ----------------------------------------- |
+| `fonts_en` | Latin-1, plus œ and cp1252 punctuation; no Polish letters, no Cyrillic | English, French, German, Italian, Spanish |
+| `fonts_pl` | All Polish letters, plus Czech and Slovak                              | Polish                                    |
+| `fonts_ru` | Full Cyrillic, plus Polish                                             | Russian                                   |
+| `fonts_ja` | Kana, about 6,700 CJK ideographs, Cyrillic                             | Japanese                                  |
+| `fonts_cn` | About 17,500 Traditional Chinese glyphs                                | Chinese                                   |
+
+Detecting the game's language therefore always gets matching fonts. The override is where it can go wrong: Polish
+or Czech on an English font configuration renders letters as blanks. Each language file's header names the font
+sets that cover it (`Fonts = pl, ru` for Polish). At startup the plugin compares that against `sFontConfigFile`,
+and on a mismatch it logs a warning and shows it in the dashboard's status banner. The README gives the one-line
+INI fix. This needs no font work of ours, and it turns "my letters have holes in them" into a stated cause.
+
+### Draft translations
+
+Every official Skyrim SE language ships a file with `Status = draft`, with matching MCM translation files. The
+drafts are machine-written. They pass the same load validation as English, and they are listed as unreviewed in
+the README and the dashboard. The drafts include the `[Matching]` lists and the `[Prompt.Form]` shapes, not only
+the templates. Both are the parts a native speaker most needs to check, and the README asks reviewers to check
+them first.
+
+**The manifest declares what ships.** SkyrimNet's plugin manifests carry a `languages` array of ISO 639-1 codes,
+which its plugin hub filters on. Ours lists the `Code` of every shipped language file, draft or reviewed, since a
+draft still produces content in its language. The list is written by hand in `manifest.json`, like the rest of that
+file. The configure step already fails when the manifest's id or version disagrees with the repo, and it gains one
+more check of the same kind: the `languages` array must match the set of `Code` values under `Languages/` exactly.
+
+### The language trial
+
+Whether a draft's rules are good enough can only be measured against a real model, a real population and SkyrimNet's
+real prompt rendering, which means the running game. But changing the game's language means editing an INI and
+relaunching, and the language is fixed for the session by design. So the measurement does not change it.
+
+The **language trial** is a dashboard button. It runs plot birth a fixed number of times under each of English,
+German, Russian and Japanese, inside an ordinary English session. Each run uses that language's table for everything
+plot birth reads: the output-language line, `[Prompt.Form]`, `[Matching]` and the name matchers. Nothing a trial
+produces is kept. Its plots are discarded before they reach `PlotState`, so nothing is saved, written to memory or
+spent from the plot budget. The dashboard shows, per language: births attempted and accepted, rejections by code and
+by check, how many distinct masterminds were cast, and a few of the accepted plots' memories rendered in that
+language.
+
+It covers German for the *zu*-clause and the genitive, Russian for Cyrillic and case endings, and Japanese for
+unseparated, verb-final text. Those three exercise every rule shape in `[Matching]`. English runs in the same trial
+as the baseline, so the comparison is between runs made minutes apart against one model, not against a census from a
+different build.
+
+This needs exactly one thing from the design: anything plot birth reads from a language table takes the table as a
+parameter, instead of reaching for the active one. `Localization` can load a second, read-only table on demand for
+the trial. The session's own table never changes.
+
+### Provisional module structure
+
+| Module                    | Role                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `TextUtf8`                | **New, pure.** utf8proc wrapped: validation, repair, case, folding, code points, word splitting.     |
+| `TextTemplate`            | **New, pure.** The ICU subset and the plural families.                                               |
+| `TextKeys`                | **New, pure.** The declared key table and each key's placeholder signature.                          |
+| `LanguageTable`           | **New, pure.** One language's table from INI text: header, grammar, per-key fallback, overlay, census. |
+| `Localization`            | **New.** Detection, override and font check; reads the files and publishes the session's table.      |
+| `PlotVerbs`               | Loses its templates and `Render`; keeps ids, slots and traits.                                       |
+| Event renderers           | Emit structured events; keep condensation logic.                                                     |
+| `DashboardUIManager`      | Sends the string table; sends ids where the dashboard labels things itself.                          |
+| `dashboard/src`           | Gains the formatter port and a `t()` lookup; every literal becomes a key.                            |
+
+---
+
+## Resolved questions
+
+The first draft of this design left six questions open. Each was settled as recorded here, and the sections above
+already describe the answer. The reverse-engineering, measurement and audit work was throwaway and is not in the repo;
+what it established is.
+
+1. **How `PlotAwareness` reaches dialogue prompts without C++ prose.** SkyrimNet's public API has no function that
+   renders a template from C++, but it does not need one. Disassembling `SkyrimNet.dll`, the wrapper around every
+   C++-registered decorator calls into nlohmann's JSON lexer, and a catch block logging "Error parsing result to JSON"
+   falls back to the raw string. SkyrimNet's own docs show the same for Papyrus decorators (`.mudcrabName` on a
+   decorator's result). So `ne_plot_awareness` returns JSON, and its submodule writes the sentences. See **Prompts
+   stay English**.
+2. **Whether `render_template` accepts a computed name.** Yes. SkyrimNet's Inja evaluates function arguments as
+   expressions, and installed prompts already build arguments with `+` (`replace(…, "with " + default(…) + ": ", "")`).
+   Template paths resolve through the layer stack (see
+   [`skyrimnet-character-profile-lookup.md`](../engine-findings/skyrimnet-character-profile-lookup.md)). The one
+   constraint found is placement: nothing under `submodules/`. Step 29's render check confirms it in the running
+   game, and an `if` chain over the fixed beat set remains the fallback if it fails.
+3. **What encoding the engine expects.** UTF-8, in every language. The string tables were decoded and validated, the
+   launcher's language table was read out of its binary, and the shipped font SWFs were parsed for coverage. The one
+   hazard is fonts under the override, which is now detected and reported. See **Encoding**. One behaviour stays
+   unmeasured, because nothing in the design depends on it: whether the renderer falls back to Windows-1252 for a
+   name that is not valid UTF-8, or drops it. We validate and repair names on read, and never emit invalid UTF-8.
+4. **What language memory tags should be in.** English, as tokens. SkyrimNet's embedding model is
+   `all-MiniLM-L6-v2`, an English-only model with an English WordPiece vocabulary, and it embeds only a memory's
+   `content`. Running that model over stored memories reproduced their vectors from `content` alone, and adding the
+   tags made every match worse. Tags are used only for exact filtering and for display. See **The output-language
+   line**. The same finding means non-English retrieval will be weaker than English retrieval whatever we do, since
+   the model is English-only. That is SkyrimNet's to fix, and the README should say so.
+5. **Whether the parse-back holds.** Partly answered in advance, by auditing every byte-level character test on the
+   paths that read model output. That audit found the two name matchers that break outright on non-Latin scripts,
+   and the inflection gap in the exclusion check; see **Names are tokens in the player's script**. Everything else
+   that classifies bytes reads EditorIDs or our own data. What an audit cannot settle is whether the drafts' rules
+   are *good*. That is the language trial's job (see **The language trial**), run once in Step 30: plot birth under
+   German, Russian and Japanese, each compared against an English baseline from the same run.
+6. **Whether to support a player overlay file.** Decided: yes. `Languages/<stem>.custom.ini` layers over the shipped
+   file key by key. See **Language files**.
+7. **How a shared prompt file words one item of a list.** Found in Step 12. `render_template` passes no arguments,
+   so a file it renders cannot be handed the item. SkyrimNet's devkit documents `{% include "name" %}` as well, and
+   its Inja installs an include callback that resolves the path at parse time. Disassembling `SkyrimNet.dll`'s
+   include visitor (at `0x3651b0`) shows it renders the included file with the includer's data **and** its
+   `additional_data`, which is where Inja keeps loop and `{% set %}` variables. So
+   `{% set step = o.step %}{% include "components/narrative_engine/plot_step.prompt" %}` words `o`. OStimNet's
+   `{% include "submodules/character_bio/7100_memories.prompt" %}` is a working instance of the path form. Step 29's
+   render check confirms the variables reach the include in the running game.
+
+---
+
+## Implementation plan
+
+Ordered so that **English never changes until it is meant to**, and so that the two steps needing the running game
+come last.
+
+- Phases A–E move every sentence out of C++ and make the matchers language-aware, while the plugin keeps producing
+  byte-for-byte the English it produces today. Each move is pinned by a test before it is made.
+- Phase F builds the player-facing surfaces, and Phase G writes the other eight languages.
+- Phase H builds the two in-game checks and hands them over.
+
+Every step from 1 onward leaves the plugin building and runnable.
+
+### How steps are verified
+
+Every step is a standalone unit with its own verification, and every step is owned by exactly one party:
+
+- **`[CLAUDE]`** — implemented and verified without launching Skyrim. Verification is a clean
+  `pwsh -File build.ps1 build`, a clean `pwsh -File format.ps1`, and, where a step says so, one or more of:
+  - **Committed Catch2 tests** in `NarrativeEngineTests`, run by `pwsh -File build.ps1 test`. Pure modules get
+    `*.test.cpp`, engine-coupled ones `*.engine.test.cpp`, following the `/unit-test` skill's conventions.
+  - **A characterization test**, which is how every move of existing text is verified. *Before* touching the code,
+    the step adds a test pinning today's output for a fixed set of inputs, and runs it against the unmodified code
+    to show it passes. The move must then leave it passing unchanged. A characterization test that was only ever
+    run after the change proves nothing, and the write-up says which commit it first passed against.
+  - **An offline render comparison**, for every step that changes what a prompt receives. See below.
+  - **A throwaway probe**: a translation unit compiled against the real build flags, a script over the Spriggit
+    export, or a check over the shipped files. It lives in the scratchpad, never in the repo. Its result is
+    recorded in this document, and it is deleted when the step closes.
+- **`[USER]`** — verified in the running game. There are two, Steps 29 and 30, and each is the same shape: **load
+  a save, open the dashboard, press one button, and wait for it to finish.** Neither asks for play, navigation,
+  console commands or a language change. Anything that would need more than that is built into the button instead.
+
+**The offline render comparison.** SkyrimNet renders prompts with Inja, so a prompt's rendering can be compared
+outside the game. The harness is rebuilt in the scratchpad whenever a session needs it, and is never committed. It
+is Inja 3.4, header-only, with stub callbacks for what SkyrimNet adds:
+
+- `render_template` and `prompt_file_exists` resolve against our `prompts/` tree;
+- decorators return fixture strings through SkyrimNet's parse-as-JSON-else-string rule;
+- `player.name`, `is_player`, `render_character_profile` and `render_subcomponent` return fixed markers.
+
+A step renders each affected prompt twice. "Before" uses the parent commit's prompt file and the context its C++
+built. "After" uses the working tree's prompt file and its structured context. Contexts come from the real context
+builders, called by a throwaway probe over synthetic inputs and dumped as JSON. The two renderings must be
+identical, apart from whitespace the step names and justifies. Where a builder cannot run outside the engine, the
+step says so and hand-builds its context from the same synthetic inputs.
+
+### How steps are executed
+
+**Closing out a step.** A step is not finished when the code is written. Once both the implementation *and* the
+step's own verification are done:
+
+1. **Mark the step complete in this document.** Tick its `- [ ]` to `- [x]`, and write up underneath it what the
+   verification actually showed, including anything that turned out differently from what the step predicted.
+2. **Commit**, on the checked-out branch. One commit per completed step, holding the implementation, its committed
+   tests, and the doc update. Before staging, look at what is staged: probes, harnesses, dumps and scratch data stay
+   in the scratchpad.
+
+**Working through the plan.** When told to implement, work **one step at a time, in order**, fully completing each
+before starting the next. Keep going until one of these stops you:
+
+- **The next step is `[USER]`.** Stop and hand it over, saying which step is waiting and what it asks the user to
+  judge.
+- **The plan as written is wrong or impossible**, in a way this document and the design above cannot resolve. Stop
+  and ask. Do not silently redesign around it.
+
+A step whose verification *fails* is not a stopping condition: fix it and finish the step.
+
+---
+
+### Phase A — Foundations
+
+#### Step 1 — UTF-8 text primitives
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** One pure module, `TextUtf8`, that every later step uses for anything that looks at characters rather than
+bytes. It wraps utf8proc, added to `vcpkg.json` and linked into both the plugin and the test targets.
+
+- Code-point iteration, UTF-8 validation, code-point length, and truncation to a code-point count on a code-point
+  boundary.
+- `RepairWindows1252` moves here from `CharacterBioResolver`, which then calls it, so that "validate and repair
+  what we read back" has one implementation.
+- Case mapping, first-letter capitalization and lowercasing, and case-folded comparison, for all of Unicode through
+  utf8proc. Caseless scripts pass through.
+- Word splitting on Unicode whitespace and punctuation (utf8proc's categories), keeping the existing rule that
+  hyphens and apostrophes belong to a word (with `PlotCasting`'s asymmetric trailing-apostrophe boundary preserved as
+  an option).
+
+No caller changes in this step.
+
+**Verification:** `*.test.cpp` cases covering each function. They include Cyrillic, Greek, Polish, Japanese and
+mixed-script strings; invalid sequences; a truncation that would split a multi-byte character; and folding pairs
+such as `Ä`/`ä`, `Ж`/`ж` and `Ł`/`ł`. `CharacterBioResolver`'s existing tests pass unchanged.
+
+Done. `include/TextUtf8.h`, `src/TextUtf8.cpp` (a core source) and `src/TextUtf8.test.cpp`, with utf8proc 2.11.3
+from vcpkg linked privately into `NarrativeEngineCore`. The vcpkg target sets `UTF8PROC_STATIC` itself, so nothing
+else in the build had to know.
+
+`RepairWindows1252` moved together with the three helpers only it used (`SequenceLength`, the UTF-8 encoder and the
+code-page table). Its test case moved with it, section for section and byte for byte; only the `TEST_CASE` name
+changed, from `CharacterBioResolver::` to `TextUtf8::`. Every other `CharacterBioResolver` test runs unchanged. No
+other caller was touched.
+
+`pwsh -File build.ps1 test`: 528 of 528 passed, eleven of them new. The cases worth recording:
+
+- **Folding is full, and normalizing.** `Straße` equals `STRASSE`, and a precomposed `é` equals `e` plus a combining
+  acute. Today's ASCII folding treats `Ä` and `ä` as different letters.
+- **Ulfric's Russian name is seven code points and fourteen bytes.** `TruncateToCodePoints` cuts it by letters, and
+  never splits a four-byte character.
+- **`Words` splits Japanese on `・` and the ideographic space, and nowhere else.** An unseparated run comes back as
+  one word. A test case records that `StandsAlone` can therefore never match a name inside such a run, which is why
+  Step 18 needs substring matching for `WordSeparated = false`.
+- **The typographic apostrophe `’` separates words.** The ASCII one does not. This matches today's splitters, which
+  only ever saw ASCII apostrophes, because the sanitizer turns the typographic one into `'` in LLM text.
+
+#### Step 2 — The `TextTemplate` formatter
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Parse and render the ICU MessageFormat subset described under **The template formatter**.
+
+- Placeholders, `select` (on a person's sex, or on text), `plural` with `#`, `list`, and `phrase`.
+- Typed arguments: text, person, number and list.
+- The CLDR plural families: none, one/other, French, Russian and Polish.
+- Grammar settings passed in as a plain struct, so the formatter never reads a file.
+- A validation entry point that checks a template against a declared placeholder signature and reports every
+  problem: an unknown placeholder, a malformed `select` or `plural`, a missing `other` branch, or a literal brace.
+
+**Verification:** `*.test.cpp`. Each form renders correctly. Each plural family is checked at its boundary numbers
+(Russian 1, 2, 5, 11, 21, 22, 25; Polish 1, 2, 5, 12, 22; French 0, 1, 2). Every validation error is reported.
+Today's `PlotVerbs::Render` behaviour, including the unfilled-slot fallbacks and first-letter capitalization, is
+reproduced by the English grammar settings. That last point is what lets Step 5 replace `Render` without changing a
+byte.
+
+Done. `include/TextTemplate.h`, `src/TextTemplate.cpp` (a core source) and `src/TextTemplate.test.cpp`.
+
+**The `PlotVerbs` reproduction was checked exhaustively, not sampled.** A throwaway engine test, compiled into the
+mocked-engine target against the real `PlotVerbs` and then deleted, ran every verb's every template through today's
+`RenderStep`, `RenderPhrase`, `RenderTarget`, `Generic` and `RenderPlotLine`. It covered three slot fills (none, the
+first slot only, all) and a scheme both present (with trailing punctuation and space) and missing. It rendered the
+same templates through `TextTemplate`, with `{scheme}` written as `{scheme, phrase}` and the same unfilled-slot
+fallbacks. **2,729 comparisons, 0 mismatches.** Step 5 can therefore replace `Render` by rewriting `{scheme}` and
+nothing else.
+
+`pwsh -File build.ps1 test`: 535 of 535 passed, eight of them new. One thing turned out differently from what the
+step assumed. A first test expected `#` inside a `select` nested in a `plural` to be the plural's number. ICU says
+otherwise: `#` is the number only directly inside a plural's own branch. The formatter follows ICU, since that is
+what a translator who knows it will expect, and the test now writes `{n}` there and asserts the literal `#`. A plural
+nested in a plural gets its own `#`.
+
+#### Step 3 — Language tables: keys, loading, fallback and overlay
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Turn INI text into a validated, immutable table.
+
+- `TextKeys`: the mechanism for declaring a key once, with its section, name and placeholder signature, so that code
+  refers to keys by symbol.
+- The loader parses the `[Language]` header (`Name`, `NativeName`, `Code`, `Status`, `PluralRule`, `Fonts`) and
+  `[Grammar]`.
+- It validates every key against its declaration and falls back per key: overlay → shipped file → English.
+- It reads `<stem>.custom.ini` when present.
+- It produces the census: keys loaded, keys fallen back and why, overlay keys used, and overlay keys that match
+  nothing.
+- `statics/SKSE/Plugins/NarrativeEngine/Languages/english.ini` ships with its header and `[Grammar]`. No content keys
+  are declared yet; each later step declares the keys it moves.
+
+**Verification:** `*.test.cpp`, using INI text held inside the tests:
+
+- a missing key falls back;
+- an invalid translated key falls back to English;
+- an invalid overlay key falls back to the shipped key;
+- an unknown overlay key is reported.
+
+A committed shipped-files test loads every file under `Languages/`. It asserts that English defines every declared
+key and that every file loads with zero rejections. It is the test every later step's new keys must keep passing.
+
+Done. `TextKeys` (`include/TextKeys.h`, `src/TextKeys.cpp`) declares keys. `LanguageTable` (`include/LanguageTable.h`,
+`src/LanguageTable.cpp`) builds a table from INI text. `statics/SKSE/Plugins/NarrativeEngine/Languages/english.ini`
+ships with its header and grammar. All three sources are core, and SimpleIni's include path joins the core library.
+The tests get `NARRATIVEENGINE_STATICS_DIR`, so the shipped-files case reads the real files.
+
+**One difference from the plan:** the pure loader is its own module, `LanguageTable`, not part of `Localization`.
+`Localization` (Step 4) keeps what touches the engine and the disk. The module table above is updated to match.
+
+Three choices the step had to make, now part of the contract:
+
+- **What counts as a rejection.** A template that fails to parse or validate, a header or grammar value that means
+  nothing, a header field the language's own file lacks, and any key no part of the plugin declares. Missing keys
+  are *not* rejections, because a draft is allowed to be incomplete. They are fallbacks, listed separately. The
+  shipped-files test asserts zero rejections for every file, and zero unavailable keys for English.
+- **Quoting.** SimpleIni trims values and has no inline comments. So a `[Grammar]` value wrapped in double quotes
+  keeps its spaces (`ListSeparator = ", "`), and `english.ini`'s own comment says a `;` after a value is part of it.
+  Templates are never unquoted: a sentence that is a quotation should stay one.
+- **The overlay changes words, not identity.** `[Grammar]` and any declared key may be overridden. `[Language]`
+  lines in an overlay are reported as unmatched and ignored.
+
+`pwsh -File build.ps1 test`: 542 of 542 passed, seven of them new. The cases cover English alone; a shipped language
+with its own grammar and a missing key; three kinds of bad translation, each falling back to English; the overlay
+over the shipped file, over English, with a rejected line falling back to the *shipped* text, with grammar, and with
+typos; header and UTF-8 rejections; a multi-line heredoc template; and the real shipped files.
+
+#### Step 4 — Detection, override, font check, and session wiring
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The plugin knows its language at `kDataLoaded`, and every thread can read it.
+
+- `Localization::Resolve` is a pure function: detected token, override and available stems in; chosen stem and
+  reason out. It compares case-insensitively, and resolves override, then detected, then `english`.
+- `Localization::FontsCover` is a pure function: the `sFontConfigFile` value and the header's `Fonts` list in; a
+  verdict out.
+- The engine glue reads `sLanguage:General` and `sFontConfigFile:Fonts` through `INISettingCollection` on the main
+  thread. It then loads the chosen table (plus English, always) once, and publishes it immutable, following
+  `Settings::Get()`'s pattern.
+- A new `[Localization] sLanguage` setting, empty by default.
+- The census and the resolution are logged once per session. A font mismatch is logged as a warning (the dashboard
+  banner comes in Step 21).
+
+**Verification:**
+
+- `*.test.cpp` for `Resolve`: every token in mixed case, an override naming a missing file, and an override naming
+  an unofficial language.
+- `*.test.cpp` for `FontsCover`, over the five vanilla font configurations.
+- The build. The engine glue is a handful of lines with no logic of its own.
+
+Done. `include/Localization.h` declares both halves. `src/LocalizationRules.cpp` (core) holds `Resolve` and
+`FontsCover`, and `src/Localization.cpp` holds the glue: it reads `sLanguage:General` and `sFontConfigFile:Fonts`,
+lists the language files, reads the chosen file and its overlay, builds the session table and English, logs, and
+publishes. `Plugin.cpp` calls `Localization::Load()` straight after `Settings::Load()` at `kDataLoaded`.
+`[Localization] sLanguage` joins `Settings` and the shipped `NarrativeEngine.ini`. It is read by `ReadIniInto`, so the
+MCM overlay file can set it too, ahead of Step 22's dropdown.
+
+Three things the step settled that the plan did not spell out:
+
+- **`Load` takes no token.** No dispatcher mints one inside SKSE's message handler. Every other `kDataLoaded` loader
+  (`Settings::Load`, `AmbushAttackerGroups::Load`, `GossipGraph::Initialize`) is token-free for the same reason, and
+  `Localization::Load` follows them. The accessors are token-free by design, like `Settings::Get`. Publication goes
+  through release/acquire atomics, so a reader on any thread sees a complete table or the empty one, never half of
+  one.
+- **The English table carries no overlay.** It exists for output that stays English whatever the session's
+  language, such as our logs, so a player's rewording should not reach it. When the session itself is English, the
+  session table does include `english.custom.ini`.
+- **The mocked-engine target compiles `Plugin.cpp`, so it now compiles `Localization.cpp` too.** That needed four
+  mocks in `testsupport/EngineMock.cpp`. The game's INI collection is not modelled, so `GetSingleton` returns null,
+  which reads as "not set". `GetSetting`, `Setting::GetType` and `Setting::GetString` are only reachable through a
+  collection, so they abort by name, following that file's existing rule for engine calls nothing stands in for.
+
+`pwsh -File build.ps1 test`: 544 of 544 passed, two of them new. `Resolve` was tested with all nine launcher tokens
+in upper and lower case, an override winning, an unofficial language (`portuguese`), an override with no file
+falling through and saying so, no language at all, and mixed-case file names. `FontsCover` was tested over all five
+vanilla configurations, the empty default, forward and back slashes, Polish on an English install (`NotCovered`),
+and a font mod's own file (`Unknown`).
+
+### Phase B — Content out of C++
+
+#### Step 5 — Plot memory and dashboard templates
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Every plot sentence a player can read comes from `[Plot.Memory]`, `[Plot.Dashboard]` and `[Plot.Item]`.
+
+- `kVerbs`' content fields move to the language file:
+  - per verb: the dashboard line and caption, and the nine first-person memories;
+  - per slot: the `remembers` lines.
+- Also moving: the succeeded, failed and conceded plot lines and the "found another way" clause, the
+  unfilled-slot fallbacks, and `PlotRecipes::Phrase`'s item phrasing (articles via `[Grammar]`).
+- `PlotVerbs::Render` is replaced by `TextTemplate`. The prompt-facing fields (menu lines, sketches, `says`, task
+  phrases) stay in C++ until Step 12.
+- Person arguments carry sex. Plot population facts gathered at `OnSessionStart` gain the base NPC's `IsFemale`, so
+  the plot worker never touches the engine for it.
+
+**Verification:** a characterization test, written and passed against the unmodified code first. It pins every
+verb's every template under three slot sets: all filled, some unfilled, and a scheme needing `SchemePhrase`'s
+lowercasing and trimming. It also pins every plot-level line and a spread of recipe phrases. It passes unchanged
+after the move. The shipped-files test passes with the new keys.
+
+Done. English's `[Plot.Dashboard]`, `[Plot.Memory]`, `[Plot.Remembered]`, `[Plot.Outcome]`, `[Plot.Unfilled]` and
+`[Plot.Item]` hold 290 keys. The new `PlotText` module (`include/PlotText.h`, `src/PlotText.cpp`) generates their
+keys from the verb table and renders them. `kVerbs` keeps only what was never text, plus the prompt-facing strings:
+each verb's three-string block went from twelve strings to three, and each slot's remembers strings became flags.
+
+**The characterization test was written and passed first.** `src/PlotText.engine.test.cpp` drives the real
+consumers: `PlotMemories`' six entry points, for every verb under three slot fills, delegated and by the
+mastermind's own hand, all three outcomes, with and without going on, and with and without a scheme. It also covers
+the dashboard's line and caption, and eight recipe phrases. That is **3,110 renderings**, including each memory's
+keeper, source, importance, type, location and related actors, so the move could not quietly change who remembers
+what. Their digest, `0xc2fc18bbda4005bc`, was pinned and passed against the unmodified code at `ec54730`. After the
+move it passes unchanged, and a line-by-line diff of the transcript it writes is identical.
+
+How the pieces moved, and the choices that went with them:
+
+- **The table is a parameter.** `PlotMemories::On*` take the table first; `PlotTick` passes `Localization::Get()`,
+  and so do the dashboard and recipe loading. The language trial (Step 28) needs this anyway.
+- **Who a memory relates is who the rendered template names.** `NamedIn` used to scan the C++ template's braces.
+  It now asks the table's parsed template, so a translation that drops a person from a sentence also drops them
+  from the memory's related actors.
+- **Prompt-facing text stays in C++ until Step 12**, and two pieces of it are therefore in two places: each verb's
+  dashboard line and caption are in `kVerbs`, for the scheme call's menu, the plan sketch and `Words`, and also in
+  `[Plot.Dashboard]` for the dashboard. A new test asserts the English copies are identical, so they cannot drift
+  before Step 12 removes the C++ ones. `PlotModel::Label` keeps the C++ line for the log and the prompts.
+- **Recipe phrases render through `PlotText::ItemPhrase`.** `PlotRecipes::Phrase` is gone, and `[Grammar]` gained
+  `IndefiniteArticle` and `IndefiniteArticleBeforeVowel`. A language whose article follows the noun's gender leaves
+  both empty.
+- **People carry their sex.** `PlotCasting::Member` gained `female`, read off the base record at population build,
+  so the plot worker never asks the engine. English uses no `select`, so nothing it renders changed.
+- **`TextKeys::All()` left the core library** for `src/TextKeysAll.cpp`, because the list now includes keys generated
+  from an engine-coupled table. The shipped-files test went with it, to `src/LanguageFiles.engine.test.cpp`. That test
+  is what proves the remembers flags match the text: English must define every generated key and nothing else.
+  `testsupport/ShippedLanguage` builds the shipped English for any engine test, and `LanguageTable::Source` returns a
+  template as written.
+- **`PlotVerbs`' manifest tests now check `english.ini`.** Each of their English-language rules (which voice names
+  the mastermind, that a task phrase appears inside its dispatch, that a noticed memory names nobody, and the rest)
+  reads the memory text from the shipped file. That file is what an NPC will actually remember.
+
+`pwsh -File build.ps1 test`: 546 of 546 passed.
+
+#### Step 6 — Gossip, letter-memory and visit narration templates
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The remaining SkyrimNet memories and events come from the language file.
+
+The step moves:
+
+- `GossipContent::ComposeHeard`'s five forms and `ComposeTold`, with listener joining via `{names, list}`;
+- the letter sender's memory;
+- the visit walk-out, valediction (both variants) and re-engage narrations;
+- every fallback name these use ("someone", "the sender", "their visitor", "The player").
+
+Persons carry sex from where each subsystem already gathers its engine facts.
+
+**Verification:** a characterization test over each composer, first passed against unmodified code. Gossip covers
+every kinship and source form, and one to four listeners. Visits cover every narration with real and missing names.
+It passes unchanged after the move.
+
+Done. The new core module `NarrativeText` (`include/NarrativeText.h`, `src/NarrativeText.cpp`) renders all of these
+from English's `[Gossip.Memory]`, `[Letter.Memory]` and `[Visit.Narration]`. `GossipContent::ComposeHeard` and
+`ComposeTold` keep their API and now delegate to it, choosing only which framing applies. The letter's memory and
+the visit's three narrations are one call each in `LetterPool` and `NPCVisitBeat`.
+
+**Two passes, because three of the four composers had nothing to pin.** The visit narrations and the letter memory
+were string concatenation inline in engine-coupled functions. Pass (a) extracted every one into `NarrativeText` with
+its English literal unchanged, rewired the callers, and added `src/NarrativeText.test.cpp`, which pins every sentence
+and fallback exactly. That includes two edge cases a careless move would change: a lower-case player name is *not*
+capitalised for opening a sentence, and an empty listener list renders as it did. All 550 tests passed against
+pass (a). Gossip's existing exact-string engine tests (all five framings, one to three listeners, an unknown name)
+were already a characterization, and passed there too. Pass (b) moved the literals into `english.ini` and changed
+nothing else; the same 550 passed.
+
+Choices the step made:
+
+- **English lists drop the Oxford comma.** Gossip's "Ysolda, Saadia and Hulda" was deliberate ("spoken-voice
+  memories, not prose"), so English's `ListFinalSeparator` is now `" and "`. Nothing rendered a list before this step,
+  so no output changed. The travel log's party ("A, B, and C") is the one other English list; Step 11 moves it and
+  records how it comes out.
+- **Fallbacks are keyed by where the person stands.** Today's code says "The player" opening a sentence, "the player"
+  inside one, and "their visitor" for the walk-out where the other narrations say "the sender". Each is its own key, so
+  nothing had to be capitalised by rule, and a player's own name is never touched.
+- **People carry their sex.** `EngineUtils::SexOf` reads it off the base record. That is static record data, already
+  read by gossip's kinship lookup on the same worker, so it is safe from any thread. Kinship words still come from the
+  game itself, already chosen for the right sex.
+- **Engine tests see real English.** Production code now renders through `Localization::Get()`, which is empty until
+  `Load` runs, and `Load` never runs in a test. `Localization::Publish` (which `Load` itself now calls) lets
+  `testsupport/ShippedLanguage` install the shipped English before any test starts. Every engine test therefore
+  renders exactly what an English game would. Without it, the existing gossip, letter and visit tests all failed, and
+  they were right to.
+
+#### Step 7 — Notifications and letters
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The plugin's remaining player-facing literals come from the language file.
+
+- The four `[NE]` debug notifications become `[Notify]` templates.
+- The letter's "Note from {sender}" fallback becomes a template, and its title and epithet lists move to
+  `[Matching] Title.*`.
+- The 24-character title cap counts code points, both in the `letter_label` check and in the fallback.
+- The item card's "A sealed letter." is served from the language file by the description hook that already supplies
+  the body.
+
+**Verification:**
+
+- A characterization test of `SynthesizeFallbackLabel` over today's English cases, first passed against unmodified
+  code, then unchanged.
+- New cases: a 20-letter Cyrillic name is no longer cut at 12 letters, and a 25-character label is rejected however
+  few bytes it has.
+- The build, for the hook and the notifications.
+
+Done. The four notices live in English's `[Notify]` and render through `DebugNotify::Text`. The fallback title and
+the item card live in `[Letter]`, and the title lists in `[Matching] Title.Strip.Start` and `Title.Strip.After`.
+`LetterComposer::FitsTitle` and `SynthesizeFallbackLabel` count `kTitleCharacters` (24) in code points. The
+description hook serves the item card from the session table.
+
+**Two passes again.** The notices were format strings at their call sites, with nothing to pin. Pass (a) moved each
+into a `DebugNotify::Text` function with its literal unchanged, and changed `PostActorNamed` to take a function that
+composes the notice from the resolved name, in place of a `vformat` pattern. It then added exact pins for all four
+notices and their fallbacks. It also pinned nine fallback labels exactly; the existing tests only checked loosely
+for three of them. 552 tests passed against pass (a). Pass (b) moved the words; the same pins passed, and 553 tests
+passed with the new character-count case.
+
+What came out differently from the plan:
+
+- **The fitting rule measures the rendered title, not the name.** The title is now a template, and a language may put
+  the name first (`{sender}からの手紙`), so "the room left after the prefix" no longer exists. The last candidate
+  shortens the name a code point at a time until the whole title fits. For English it lands exactly where the byte
+  arithmetic did: every pinned label is unchanged.
+- **The Cyrillic figure in the plan was wrong.** A twenty-letter Cyrillic name used to keep *seven* of its letters,
+  because fourteen bytes is seven Cyrillic letters, not twelve. It now keeps fourteen. The new test asserts the exact
+  title, and that a 24-letter, 48-byte title fits while a 25-letter ASCII one does not.
+- **`[Matching]` holds plain comma lists for now.** The title lists are declared keys with no placeholders, read
+  through `Table::Source` and split on commas. Step 16 gives `[Matching]` its own parser and rule vocabulary, and
+  Step 17 moves title stripping onto it, along with its still-ASCII case folding.
+- **The ambush notice keeps "(1 attackers)".** The step moves words; it does not fix them. A translator can use
+  `{attackers, plural, ...}`, and English could adopt it too.
+
+A process note, recorded because it cost a failing test: writing C++ escape sequences through a Python string turns
+`"Ð"` into the character U+00D0 rather than the four characters of an escape. The test's first draft held
+double-encoded Latin-1 and passed one check by coincidence. Escapes are now written from raw strings.
+
+#### Step 8 — The co-save stores structure, not sentences
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** No sentence C++ composed is saved where the fields to re-render it are already saved.
+
+- A plot's `concession` is rendered from its scheme when shown, and no longer saved.
+- `DecisionLog` failure reasons become a code plus arguments.
+- `CombatEventLog` damage sources become an enum.
+- `TravelEventLog`'s player-party fallback becomes a flag.
+- The dashboard-seeded test plots and the debug plot take their text from the language file.
+- `NEPL`, `DCLG`, `NECE` and `NETR` bump their record versions. Nothing migrates.
+
+**Verification:**
+
+- Round-trip `*.engine.test.cpp` cases for each changed record.
+- A characterization test showing every re-rendered string (concession, failure reason, damage phrase, party name)
+  matches what the old code saved, for the same inputs.
+
+Done. Record versions: `NEPL` 14 → 15, `DCLG` 1 → 2, `NECE` 1 → 2, `NETR` 1 → 2.
+
+- **Concession.** `Plot::concession` is gone from the struct and the co-save. The dashboard renders
+  `PlotText::PlotOutcome(Conceded)` for any plot whose outcome is `Conceded`, which is exactly when the field used to
+  be non-empty.
+- **Decision log.** `DecisionRecord` gained `failure` (none, beat missing, LLM error, not JSON, not offered),
+  `failureDetail`, and `note` (the model's own, invalid JSON, not an object, forced dispatch). `beatSelected` now holds
+  only a beat id, and `narrativeNote` only the model's words. `DecisionLog::ActionText` and `NoteText` render the rest
+  from English's `[Decision]`. The dashboard renders through the session table. `story_eval`'s `decision_log_tail`
+  renders through English, so that prompt is unchanged byte for byte; Step 15 now also covers moving those words into
+  the prompt.
+- **Combat.** A hit's environmental source is a `Source` enum (actor, poison, spell trap, trap, a named activator,
+  unknown). Only an activator keeps a name. The words ("poison", "a spell trap", "a trap", the activator's name
+  lowercased) are `SourceWords`, in the renderer, until Step 11 moves the timeline's wording into a prompt.
+- **Travel.** An unnamed player is saved as an empty name, and `RenderParty` calls them "The Player".
+- **Seeded plots.** The two test plots' ambitions, schemes, finishes, place and item, and every line of the debug plot,
+  are `[Plot.Test]` keys rendered at seed time.
+
+**How the characterization was done, and where it could not be.** Before anything changed, the two decision-log
+tests that only checked `starts_with("(failed")` were tightened to the exact strings the old code saved, captured by
+running them. So were the two parse-failure notes, which were checked by prefix. Those four exact checks passed
+against the unmodified code, and pass unchanged through `ActionText` and `NoteText` now. A new test renders every
+failure and note code and pins each against the sentence the old code composed, and round-trips a failed record
+through the co-save. A new travel test saves an unnamed player and finds "The Player" both before and after a load.
+The concession sentence was already pinned by `PlotVerbs`' rendering test.
+
+The combat source words could not be pinned before the change. Raising a hit from a trap or a poison in a test needs
+hit events, magic items and activators modelled in `EngineMock`, and building that harness to move four words within
+one function was out of proportion. They moved verbatim from `ResolveHitSource` to `SourceWords`, and the existing
+save-and-load test passes on the new source byte.
+
+The failure detail stays verbatim, beat validators' English messages included ("sender 0x1A6FF was not offered for
+this beat"). It is diagnostic data, the same class as a log line, not something composed for a player.
+`pwsh -File build.ps1 test`: 554 of 554 passed.
+
+#### Step 9 — Data INI text, overridable by id
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A language file can reword a faction, an item or an attacker group without touching the data INIs.
+
+- `[Data.Faction]`, `[Data.Item]` and `[Data.AttackerGroup]` are keyed by the data file's own id. An override replaces
+  the INI's text, and a missing override keeps it.
+- These keys are open-ended, not declared in `TextKeys`, because modded rows are first-class. The census reports any
+  override whose id matches no loaded row.
+
+**Verification:** `*.test.cpp` over an override, a missing override, and an unmatched override. With no overrides
+present, each data file's loaded display text is identical to before the change.
+
+Done. `LanguageTable` reads every `[Data.*]` section as open-ended raw text: never parsed as a template, never
+rejected as an unknown key, and taken key by key from the first of overlay, shipped file and English that has it.
+`Table::DataText(section, id)` returns an override or null, and `Table::UnmatchedData(section, ids)` lists the ones
+that match no loaded row. Each loader applies overrides where it adopts its display text, and reports the unmatched
+ones after loading:
+
+| Section               | Id                                | Loader                                        |
+| --------------------- | --------------------------------- | --------------------------------------------- |
+| `[Data.Faction]`      | the section id (`college`)        | `PlotFactionRoster::Resolve`                  |
+| `[Data.Item]`         | the line's EditorID               | `PlotItemPool::Load`                          |
+| `[Data.AttackerGroup]`| the section id (`bandits`)        | `AmbushAttackerGroups`' `ParseGroup`          |
+
+Only display text is overridable. An attacker group's `Flavor` stays in its data file, because it is read only by the
+Director's prompt.
+
+`pwsh -File build.ps1 test`: 555 of 555 passed, one new. The new case covers an override by id, case-insensitive ids,
+the overlay winning over the shipped file, no override leaving the data file's text standing, an unmatched override
+reported against the loaded ids, and `[Data.*]` keys raising neither a rejection nor an overlay complaint. English
+ships no `[Data.*]` sections, so every loader's existing tests (rosters, items, attacker groups) ran unchanged. That
+is the "identical with no overrides" half of the verification.
+
+### Phase C — Prompt prose out of C++
+
+#### Step 10 — Beat descriptions as prompt files
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** `action_select` reads each beat's description from its own prompt file.
+
+- `AmbushBeat`, `NPCLetterBeat` and `NPCVisitBeat` lose `Description()`'s prose. Each moves to
+  `prompts/components/narrative_engine/beats/<name>.prompt`.
+- `action_select` renders each with `render_template` on the candidate's name, guarded by `prompt_file_exists`.
+- Where a description said "the player", it may now say `{{ player.name }}`. That is the one intended rendering
+  difference.
+- The dashboard stops showing description prose, and shows a `[Dashboard.Beat]` caption instead.
+
+**Verification:** offline render comparison of `action_select` over each beat as the sole candidate and all three
+together. The only allowed difference is "the player" → the player-name marker, and each occurrence is listed in the
+write-up.
+
+Done. The three descriptions are `prompts/components/narrative_engine/beats/ambush.prompt`, `npc_letter.prompt` and
+`npc_visit.prompt`, each holding exactly the text `Description()` returned. `action_select` renders each through
+`render_template` on the candidate's name, guarded by `prompt_file_exists`. `Description()` is gone from `IBeat`,
+from the three beats and from the three test fakes, and `BeatSystem` no longer sends a description. The three engine
+tests that checked a description names the parameters its beat reads now read the beat's prompt file, through a new
+`testsupport` `ShippedPrompt`.
+
+**The offline harness, built for this step and reused by the rest of Phase C.** It lives in the scratchpad, is
+rebuilt per session, and is never committed. It is a vcpkg-manifest CMake project with `inja` and `nlohmann-json`,
+plus `harness.cpp`, which renders one template against a context and a stubs file. vcpkg's baseline gives **Inja
+3.5.0**, not the 3.4 the plan named; `CUSTOM_PROMPTS.md` already records renders agreeing across 3.3–3.5. Building it
+surfaced one setting the harness must match: Inja treats a line opening with `##` as a statement by default, and every
+Markdown heading in our prompts opens that way, so line statements are switched off.
+
+**The comparison.** `BuildBeatSelectPromptContext` sits in an anonymous namespace, so no probe could call it. As the
+plan allows, the contexts were hand-built: four of them (each beat alone, and all three), with sender candidates,
+memories, attacker groups, recent events and the player context. They carry the real `Name()` and `Description()`
+strings, which a throwaway probe constructed the three beats to dump. The "before" side rendered the prompt tree
+snapshotted before the change, with descriptions in the context. The "after" side rendered the working tree without
+them. **Every rendering is identical except for one added newline per description**, and that is the one named
+whitespace difference. A file rendered through `render_template` keeps its trailing newline, and Inja's `{%-` strips
+only the spaces on its own line, not the newline before it; a test against the harness showed exactly that. Each
+description was already followed by three to five blank lines, so a model sees no difference. `CUSTOM_PROMPTS.md`
+now records the behaviour.
+
+**What was not done, and why.** The plan allowed the descriptions to say `{{ player.name }}` where they say "the
+player". They keep their words, so that this step's comparison stays exact; `CUSTOM_PROMPTS.md` notes that the old
+exception no longer applies to them. The plan's `[Dashboard.Beat]` caption was not needed: the dashboard never showed
+beat descriptions, and only the beat-select context read them.
+
+`pwsh -File build.ps1 test`: 555 of 555 passed. The three prompt files deploy with the build.
+
+#### Step 11 — The event timeline as structured events
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** `story_eval` and `action_select` word the timeline themselves.
+
+The event renderers emit structured records (a `kind` plus fields) instead of sentences. They are
+`SkyrimNetEvents`, the condensed-combat logic, `CombatEventLog`, `WeatherEventLog` and `TravelEventLog`. A shared
+include, `components/narrative_engine/event_line.prompt`, words each kind. The step also covers:
+
+- **Relative time** becomes a pre-bucketed `{value, unit}`, which the include words. That covers the `[N minutes
+  ago]` prefix, the idle marker, and the `age` on memories in the sender-candidate lists.
+- **Condensation stays in C++**, and emits a condensed record.
+- **The dashboard's event list and `EventHistoryWriter`** render from `[Event.*]` language templates. The log
+  always uses the English table, because logs are out of scope.
+
+**Verification:**
+
+- Offline render comparison of `story_eval` and `action_select`, over a synthetic timeline that contains every event
+  kind, both condensation shapes, an idle gap, and ages in every bucket.
+- A characterization test over the `[Event.*]` rendering against today's rendered tail, for the dashboard and the
+  log.
+
+Done. Every timeline entry now carries a `line` record (a `kind` and that kind's fields) and, when it has a time, an
+`age` bucket such as `{"value": 5, "unit": "minute"}`, in place of the `text` sentence. `include/EventText.h` lists
+every kind, its fields and the age units; it is the contract between the C++ that builds the records and the two
+places that word them. `SkyrimNetEvents::FormatEventsText` became `DescribeEvents`, and `FormatRelativeGameTime` and
+`FormatRelativeGameDuration` became one `RelativeGameTime` that returns the bucket. `CombatEventLog`,
+`WeatherEventLog` and `TravelEventLog` emit records, and so do the merge's condensed combat entry and idle marker.
+Condensation stays in C++: a run of hits becomes a `combat_summary` record of fights and damage, and a run of moves a
+`journey` or `visit` record.
+
+**Who words the records.** The Director's prompts word them in English through the new
+`components/narrative_engine/event_timeline.prompt`. The dashboard words them in the player's language through the
+new core module `EventText`, which renders the `[Event]`, `[Event.Age]`, `[Event.Duration]`, `[Event.SkyrimNet]`,
+`[Event.Combat]`, `[Event.Weather]` and `[Event.Travel]` sections of `english.ini`. The event history log uses the
+same module with the English table. A line another plugin wrote (an unknown event type whose data is a sentence)
+stays as it came.
+
+**Two departures from the plan, both forced by `render_template` taking no arguments.** An included file renders
+against its caller's whole context, so it cannot be handed one event to word.
+
+- The include is `event_timeline.prompt`, not `event_line.prompt`. It renders the whole `recent_events` list, which
+  both prompts already pass by that name, so each prompt replaced its own loop with one `render_template` call.
+- Memory and dialogue ages are worded inline in each prompt that shows them: `action_select`'s two sender lists,
+  and both compose prompts' memory and dialogue lists. The plan had the include word them, which no file can do for
+  a row it is not given. The rows' `age` is now the same bucket. Sender dialogue's `age_str` became `age`, with the
+  unit `unknown` where today's code wrote "recent".
+
+**Verification, in two passes.** Pass 1 moved every renderer's wording, still as C++ literals, into `EventText`
+reading the new records. The existing assertions on rendered text kept their expected strings unchanged, and they
+passed. That covers every SkyrimNet kind, every condensation rule, the idle marker and every age bucket. A new pin
+table was then added in `src/EventText.test.cpp`: 65 records, covering every kind, every shape a kind's fields can
+take, both condensation shapes (fights and damage, alone and mixed) and every age bucket, each beside its line.
+Pass 2 replaced the literals with the `[Event.*]` templates. The table then failed in exactly two cases, the named
+difference: a list of three or more names (a travel party, or the places a visit took in) is joined as `[Grammar]`
+joins every list, without a comma before "and". The two cases now hold the new line, plus a `prompt` field with the
+old one, which the prompts keep.
+
+**The render comparison.** The scratchpad harness rendered six prompts, before and after. `story_eval` and
+`action_select` each received all 65 records as their timeline. `action_select` and both compose prompts, with and
+without a motivating memory, received memory rows in every age bucket and dialogue rows in every bucket plus
+`unknown`. The "before" side rendered the snapshotted prompt tree against the old sentences, taken from the pin
+table's lines (or the `prompt` field where it has one). **All six renders are byte-identical**, so there is no
+whitespace difference to name. The include's layout depends on two Inja rules, read from its lexer:
+
+- `-%}` eats every space and newline after it.
+- `{%-` clears only an all-blank final line, and keeps the newline before it.
+
+So each branch's words sit on one line, and that line's newline ends the entry. Older Inja may evaluate both sides of
+an `and`, so a field only some kinds carry is read under an `if` on the kind. `CUSTOM_PROMPTS.md` records both.
+
+**Left for later, and why.**
+
+- `TravelEventLog::FormatHoldName` still appends " Hold" to a hold's name unless the name already ends with it.
+- `CombatEventLog` still lowercases an activator's name.
+
+Both shape a name, not a sentence, and both are English matching rules, which is Phase D's subject. The Director
+pipeline's drop of empty events now keys on the `no_data` kind instead of on text ending in "(no data)". The one
+behaviour change is that a third-party sentence which merely ends with those words is no longer dropped.
+
+`pwsh -File build.ps1 test`: 557 of 557 passed. `build.ps1 build` is clean, and the new include deploys with the
+build.
+
+#### Step 12 — Plot menus, plans and verb phrasing in prompts
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The plot prompts phrase their own menus, plans and verbs.
+
+The prompt-facing half of `kVerbs` moves to `components/narrative_engine/plot_verbs.prompt`: menu lines, plan
+sketches, slot `says` text and task phrases. Its callers pass verb ids and filled slots instead of text. So do:
+
+- `PlotPlanning`'s option lines, purposes, outcome phrases, `StepsSoFar` and `PlanText`;
+- `PlotCandidates::PersonLine` and its relation phrases;
+- `PlotBirth::StandingPhrase`.
+
+The decision templates and `plot_ambition` / `plot_cast` consume the structured fields. After this step `kVerbs`
+holds only ids, slots and traits.
+
+**Verification:** offline render comparison of every plot prompt and decision template, over a synthetic plot at
+birth, mid-plan, and at adaptation, with every verb represented somewhere.
+
+Done. Every step a plot prompt shows is now a record, and the prompts word it. The record is `{verb, fill, open,
+agent_open}`:
+
+- `fill` holds each filled placeholder.
+- `open` says an unfilled slot shows as `[mark]`, for a step still being planned. Otherwise it reads as someone,
+  somewhere or something, as a step that has happened, or a verb on a menu, does.
+- `agent_open` says the same of the agent alone.
+
+`PlotPlanning::StepRecord` builds it in three forms, `Planned`, `Done` and `Menu`, which are today's sketch, label
+and generic sentence. One file words all three.
+
+**The prompt files.** All are under `components/narrative_engine/`:
+
+- `plot_step.prompt` words a step. It has one branch per verb, generated once from `kVerbs` by a scratchpad script.
+- `plot_role.prompt` words what each role of a verb is for, which is the old slot `says`.
+- `plot_done.prompt` words a step that has happened, with how it went.
+- `plot_purpose.prompt` words what a slot's step is for in the plan.
+- `plot_standing.prompt` words a faction standing token.
+
+The templates reach them through `{% set %}` and `{% include %}`, the mechanism recorded as resolved question 7.
+
+**What the callers pass now.**
+
+- `PlotPlanning`'s option lines are records: a preparation carries its `before`, and the adapt options carry only
+  their keys.
+- Its purposes are a `kind` with fields, and its outcome phrases are `PlotModel::StepOutcomeId` tokens.
+- `StepsSoFar` and `PlanText` are lists of records, which the templates number.
+- `PlotCandidates::PersonLine` became a `Why` (occupation, a `RelationId` token, where a stranger lives, whether the
+  scheme names them), which `plot_slot.prompt` words. `PlotMenus::RelationPhrase` is gone.
+- `PlotBirth::StandingPhrase` became `StandingId`: `leads`, `senior`, `member`.
+- `kVerbs` lost its dashboard sentence, and `PlotVerbs::Generic` and `RenderStep` went with it.
+- `PlotModel::Label` remains for the plot log and for casting's word matching. It now renders the English
+  `[Plot.Dashboard]` line, which a PlotText test had already pinned equal to the one removed.
+
+**The comparison.** The scratchpad harness gained Inja's include callback, resolving paths under `prompts/` as
+SkyrimNet does. The contexts are the real ones the planner builds: `PlotPlanning` was instrumented for the
+comparison only, behind an environment variable, and the instrumentation was removed before the commit. It dumped
+every context it handed its `Ask` across the plot test suite, 238 of them, once from the old code and once from the
+new.
+
+A conversion script turns each new context back into the old strings by the old C++ rules. It agreed with the old
+code's dump on all 238, matched as multisets because the two test runs ordered their cases differently. It then
+built 24 synthetic contexts for what the tests do not reach:
+
+- every verb filled, done and on a menu, including the nine the tests never fill;
+- every outcome, and an empty slot in a done step;
+- every purpose, place and thing slots, every relation, a named stranger, and the mastermind's own option;
+- every standing, and both birth prompts.
+
+Every context, real and synthetic, was rendered twice: the old prompt tree against its old strings, and the new tree
+against its record. **All 262 renders are byte-identical.**
+
+**Left for the steps that remove their last readers.** Plot awareness, which Step 14 converts, still reads
+`kVerbs`' two task phrases through `RenderPhrase`. The retry messages that `PlotBirthParse` and
+`PlotCandidates::ResolveRoles` compose, which Step 13 turns into codes, still read the slot `says`. Both stay in
+C++ until then, and the prompts carry their own copy of `says` meanwhile. `caption` stays as well. It is the
+dashboard's fallback and `PlotVerbs::Plain`'s word for an id, a matching rule, which is Phase D's subject.
+
+`pwsh -File build.ps1 test`: 557 of 557 passed. `build.ps1 build` is clean, and the five includes deploy with the
+build. The planning tests keep their expected sentences: their helper rebuilds each from the record and the English
+dashboard line, so they now also check that the records carry the right fills. A PlotText test fails the build when
+a verb or a role has no branch in `plot_step.prompt` or `plot_role.prompt`.
+
+#### Step 13 — Retry and rejection codes
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A rejected answer tells the model why in the prompt's words, not C++'s.
+
+- Every rejection in `PlotBirthParse` and `PlotCandidates` becomes a code plus arguments.
+- `ctx["retry"]` carries them, and `plot_cast` / `plot_ambition` word each code they can receive.
+- `PlotLog` records the code and its arguments.
+- `kVerbs`' slot `says` goes, since those messages are its last C++ readers. Step 12 left it for them, and the
+  prompts already word it in `plot_role.prompt`.
+
+**Verification:**
+
+- Offline render comparison of both prompts under every code.
+- A `*.test.cpp` asserting that every code the parsers can return is one the receiving prompt handles, so a new code
+  without wording fails the build's tests rather than reaching the model as nothing.
+
+Done. A refusal is now a `PlotRejection::Rejection`, a code and its arguments. The new core module `PlotRejection`
+holds the closed set of 31 codes and the arguments each carries. Every refusal in `ParseCast`, `ParseAmbition` and
+`ReadText` builds one, and so do the two the retry loop adds: a failed call and a parser that threw.
+`PlotCandidates::ResolveRoles` returns a list of them, one per role that did not resolve, instead of a joined string.
+
+- `ctx["retry"]` is an empty list on the first attempt, and the one refusal on the second.
+- Both birth prompts word it through `components/narrative_engine/plot_rejection.prompt`, which they share, with
+  `plot_admitted.prompt` for the "it can be …" tail.
+- A role is said through Step 12's `plot_role.prompt`.
+- `PlotLog` records the code and arguments as JSON.
+
+The reasons the population leaves somebody out are tokens: `ghost`, `not_person`, `no_location`, `no_hold`, `child`.
+`kVerbs`' slot `says` is gone, as the step's own bullet planned, since these messages were its last reader.
+
+**Why one include, not one per prompt.** The plan had each prompt word the codes it can receive. A cast refusal and
+an ambition refusal share most of their wording ("response was not a JSON object", a missing field, a field naming
+the player). One file keeps that in one place, and the test reads one file. The new `PlotRejection.test.cpp` checks
+that every code has a branch there.
+
+**The comparison.** The same method as Step 12. `ParseCast`, `ParseAmbition` and `ResolveRoles` were instrumented
+for the comparison only, and the probes removed before the commit. They dumped every refusal the plot test suites
+produce: 37, from the old code and from the new. A script turns each new record back into the old sentence by the
+old C++'s rules, and it agreed on all 37. One of them is the parse test's fake resolver, which used to return the
+bare string "Balgruuf cannot be the authority". The test now hands back a `role_not_admitted` record with no role,
+and the script maps that one case to the fake's old text.
+
+Both prompts were then rendered under 40 refusals covering all 31 codes, and with no refusal at all:
+
+- every field a text check names;
+- every left-out reason;
+- an admitted list that is empty, short, and cut;
+- two- and three-way ambiguous names;
+- a `roles_unfit` carrying every role problem at once.
+
+The old tree took the old sentence as `retry`, and the new tree took the record. **All 82 renders are
+byte-identical.**
+
+`pwsh -File build.ps1 test`: 559 of 559 passed. `build.ps1 build` is clean, and the two includes deploy with the
+build.
+
+#### Step 14 — `ne_plot_awareness` returns structure
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The plot-awareness submodule writes its own sentences.
+
+- `PlotAwareness::Describe` returns JSON: the role, the scheme, the steps and their states for a mastermind, or the
+  task and its sender for an agent.
+- `0300_ne_plot_awareness.prompt` indexes into it and words it.
+- An NPC in no plot still renders nothing.
+- `kVerbs`' two task phrases go, with `PlotVerbs::RenderPhrase` and `Unfilled`: plot awareness was their last
+  reader, which Step 12 left them for.
+
+**Verification:** offline render comparison of the submodule for a mastermind at each step state, an agent, and an
+NPC in no plot. The harness applies SkyrimNet's parse-as-JSON rule, which is the behaviour established by
+disassembly. Step 29 confirms it in the running game.
+
+Done. `PlotAwareness::Describe` returns a record, and the decorator hands it to SkyrimNet as JSON, or the empty
+string for somebody in no plot. `include/PlotAwareness.h` lists the record's fields:
+
+- for a mastermind, the scheme as a phrase, whether they have had nobody to send, and each step's state, outcome,
+  whether they did it themselves, whom they sent, and its task;
+- for an agent, who sent them and their task.
+
+The submodule now includes `components/narrative_engine/plot_awareness.prompt`, which words the record. Each step's
+work is worded by `plot_task.prompt`, which holds both sides of every verb's task phrase. A scratchpad script
+generated it once from `kVerbs`.
+
+The two task phrases are gone from `kVerbs`, as the step's own bullet planned, and so are `Verb::Text`,
+`PlotVerbs::RenderPhrase` and `Unfilled`. `kVerbs` now holds only ids, captions, slots and traits. The caption stays
+for the dashboard's fallback and `PlotVerbs::Plain`. The manifest tests that held each task phrase to its slots now
+read the phrases out of `plot_task.prompt`, so they hold the prompt file to the same rules. Their "carries all twelve
+templates" case fails the build when a verb has no task branch.
+
+**The comparison.** `told`, a script rule giving the old C++'s sentence for a record, was checked against every
+sentence the old `PlotAwareness` tests asserted: four whole and three in part. Each was checked for the record the
+new tests now assert of the same scenario, and none disagreed. The submodule was then rendered for 36 scenarios:
+
+- those scenarios;
+- an NPC in no plot;
+- an agent for every verb, with and without a sender, and with every slot unfilled;
+- four masterminds, alone or not and with or without a scheme, whose steps run through every verb in every state,
+  outcome and side, some unnamed.
+
+The old tree was rendered with the decorator answering the old sentence. The new tree was rendered with it answering
+the record as JSON, which the harness parses as SkyrimNet does. **All 36 renders are byte-identical.**
+
+`pwsh -File build.ps1 test`: 559 of 559 passed. `build.ps1 build` is clean, and the two includes deploy with the
+build.
+
+#### Step 15 — Remaining prompt prose, and the audit
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** No LLM-bound prose is left in C++.
+
+- `GossipContent::BandLengthSpec` passes `lo`/`hi`, and `gossip_seed` words the range.
+- `DecisionProbe`'s sentences move to its prompt.
+- `story_eval`'s `decision_log_tail` passes each record's failure and note *codes*, and the prompt words them. Step 8
+  left them rendered through the English table's `[Decision]`, so the prompt stayed byte-identical meanwhile.
+- Then audit: every string literal in `src/` and `include/` that reaches a prompt context, a decorator return or a
+  memory.
+
+**Verification:**
+
+- Offline render comparison of `gossip_seed` and `probe`.
+- The audit's result is recorded in this document: each remaining literal and why it may stay (a token, a log line,
+  a key name). The expected count of LLM-bound sentences is zero.
+
+Done.
+
+- `GossipContent` passes each band's length as `{lo, hi}`, and `gossip_seed` words "4 to 6 sentences", or "no more
+  than 2" once `lo` reaches nothing.
+- `DecisionProbe` sends its round and question ids, and `probe.prompt` words each of its 23 questions. The choice
+  that the sentence does not name goes as a `none` flag.
+- `story_eval`'s `decision_log_tail` carries the beat, the failure and the note as `DecisionLog::FailureId` and
+  `NoteId` tokens, and the model's own note only when there is one. The prompt words the three stand-in notes.
+
+The probe's eight round sentences, and the answers each question is judged against, stay in C++. They are the
+fixtures under test: the choices are cut from the sentence, and the answer is judged against them, so they must live
+where the cutting and the judging happen. The probe is a developer tool behind the Plots tab, part of no feature.
+
+**The comparison.** Every one of 50 renders is byte-identical:
+
+- `gossip_seed` with one, three and six bands, with and without a location;
+- the probe for every round, question and order;
+- `story_eval` with a decision tail holding every note and failure.
+
+**The audit.** It covered every way C++ text can reach a model:
+
+- the nine call sites of `SendCustomPromptToLLM` and `SendCustomDecision`, and the contexts each builds;
+- the three decorators;
+- the four writers of memories;
+- the Papyrus scripts that pass text to SkyrimNet.
+
+A script listed every string literal holding a space in the 39 files that build or feed those, and each was
+classified by hand. The Papyrus scripts only forward what C++ hands them, which is language-file text or the model's
+own sanitized prose.
+
+**One finding, fixed here.** When an exposure of a community's leader is shown to the community rather than a
+person, `PlotCandidates` composed the slot's text in C++: "the people of Whiterun", or "the people they lead". That
+text is kept with the step and remembered by everyone it reaches. It is now `[Plot.Audience]` in `english.ini`,
+rendered with the session's language as the step is planned, which is how made items are named. The existing tests
+pin "the people of Whiterun" unchanged. The same line had also put the phrase into the candidate's `Why` by brace
+elision. That was a Step 12 slip with no effect, since a list of one is never asked about, and it is fixed too.
+
+**What stays, and why.** None of it is a sentence a model reads:
+
+- **Log and diagnostic lines.** Planning and adaptation rejections, gossip verdict reasons, why a visit cannot start
+  here, the probe's verdicts, the arrival-point traces, and `DecisionRecord::failureDetail`. They go to the logs.
+  `failureDetail` also rides in `decision_log_tail`, which no template renders.
+- **Tokens and ids.** Verb, beat, phase, relation, standing, outcome, rejection and urgency codes; `AlphaCanon`'s
+  signal names; and `"Diary Entry:"`, the prefix SkyrimNet itself writes on diary memories, which the memory readers
+  match.
+- **Decorator descriptions.** What SkyrimNet lists beside each decorator when it is registered. They are never
+  rendered into a prompt.
+- **The probe's fixtures**, above, and `DecisionProbe::kNotNamed`, which is now only an internal sentinel and a word
+  in its log.
+- **Matching rules, which are Phase D's subject.** None of these is a sentence, but each is English:
+  - `TravelEventLog::FormatHoldName`'s " Hold" suffix;
+  - `CombatEventLog`'s lowercasing of an activator's name;
+  - `PlotCandidates::Says`'s list of articles to strip ("a sheaf of ", "an ", "a ");
+  - `PlotVerbs::Plain`, which writes a verb id the model put into prose as its English caption;
+  - `PlotVerbs::SchemePhrase`, which lowercases a scheme's first letter to set it inside a sentence.
+
+The count of LLM-bound sentences left in C++ is zero.
+
+`pwsh -File build.ps1 test`: 559 of 559 passed. `build.ps1 build` is clean.
+
+### Phase D — Language-aware matching
+
+#### Step 16 — The matching engine
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The shared vocabulary under **Validators that read content**, as a pure module.
+
+- `.Reject`, `.Require` and `.Match` lists at start, end and anywhere.
+- Word-sequence entries, with `*` patterns.
+- `WordSeparated = false` character-sequence matching.
+- `Name.Suffixes`.
+- `Disabled = <reason>`.
+- The loader parses `[Matching]`, and the census names disabled checks.
+
+**Verification:** `*.test.cpp` built from the design's own examples:
+
+- the English scheme list;
+- German `zu *` and `*zu*`, including the *zurück* false positive the doc admits;
+- the Japanese scheme rules;
+- the French and German ghost rules;
+- *Drachenbluts* against `drachenblut*`.
+
+The shipped-files test gains the rule that every check has rules or a `Disabled` entry.
+
+Done. The new core module `TextMatch` evaluates the design's vocabulary.
+
+- A `[Matching]` key ending `.Reject.Start`, `.Reject.End`, `.Require.Start`, `.Require.End`, `.Match.Start`,
+  `.Match.End` or `.Match.Anywhere` sets one list of its check, and `.Disabled` gives the reason the check is off.
+- Any other key, such as `Title.Strip.Start` or `Name.Suffixes`, is a plain list read by name.
+- An entry is a sequence of word patterns, and `*` in a pattern matches any run of letters, the empty run included.
+  The text is folded with Step 1's case folding and split with its Unicode word splitter.
+- With `[Grammar] WordSeparated = false`, which the grammar block now reads, each entry is a run of characters. It is
+  matched at its position in the text, with the punctuation and spaces at either end set aside, so a closing `。`
+  does not hide the verb's ending.
+- A gate passes when nothing it rejects matches and every non-empty require list does. A detector fires when any of
+  its match lists matches. A disabled check passes everything and fires on nothing.
+
+`LanguageTable` reads `[Matching]` as an open-ended section, like `[Data.*]`, since which keys a check needs depends
+on the language. Fallback is **per check, not per key**, which the plan did not spell out. A check, or a plain list,
+is taken from the overlay and the language's own file when either says anything of it, and from English only when
+neither does. Falling back key by key would have run English's `Scheme.Reject.Start` against German text beside
+German's own `Scheme.Require.End`. The census gains a `disabled` list, naming each check and its reason.
+`LetterComposer`'s two title lists are now read through `Matching()` instead of as declared template keys.
+
+**Verification.** `TextMatch.test.cpp` is built from the design's own examples:
+
+- the English scheme list, including "Heal" and "Theft", whose first letters spell rejected words but are not them;
+- German's `zu *` and `*zu*`, with *zurück* passing as the false positive the design admits;
+- the Japanese rules, plain form against polite and past, with and without a closing `。`;
+- the ghost tests for English (last word), French (first word) and German (anywhere, compounded);
+- *Drachenbluts* against `drachenblut*`;
+- a disabled check, and plain lists.
+
+Further cases build tables to show that a language's own check takes no English rules and that an overlay changes a
+check without bringing them back. They also check the census names a disabled check, that `WordSeparated = false`
+reaches the rules, and that `[Matching]` keys are never reported unknown. The shipped-files test gains the rule: for
+every check English defines, each shipped file, read alone, must give rules or a `Disabled` reason. English defines
+no checks yet, since its two lists are plain ones, so the rule starts biting in Step 17.
+
+`pwsh -File build.ps1 test`: 566 of 566 passed. `build.ps1 build` is clean.
+
+#### Step 17 — Content validators on `[Matching]`
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The five content validators read their rules from the active table.
+
+- `SchemeOpensWithVerb`, `NamesThePlayer` (title and name halves), `IsGhostRecord`, title stripping and `SameLine`
+  run on the matching engine and Step 1's folding.
+- `english.ini`'s `[Matching]` reproduces today's word lists exactly.
+- Each validator takes the table as a parameter, for the trial.
+
+**Verification:** a characterization test of all five over today's cases, first passed against unmodified code, then
+unchanged. New cases cover non-English inputs under synthetic tables. Today's three-*byte* name minimum becomes
+three code points, so a two-letter Cyrillic name is now correctly too short. That is the one intended English-table
+behaviour change, and it is listed in the write-up.
+
+Done. All five validators read their rules from the table they are given, which defaults to the session's:
+
+- `SchemeOpensWithVerb` reads `Scheme`.
+- `NamesThePlayer` reads `PlayerTitle` for its title half. Its name half splits with Step 1's splitter and allows
+  `Name.Suffixes`, matching anywhere in a language written without spaces.
+- `IsGhostRecord` reads `Ghost`.
+- Title stripping compares with Step 1's folding.
+- `SameLine` compares with Step 1's folding.
+
+`ParseAmbition` passes its table down, for the trial. The 24-character fallback title was already fitted by rendering
+the localized template, in Step 7.
+
+**`english.ini` reproduces today's lists exactly**, with three entries that exist to reproduce quirks of the old code
+rather than to describe English:
+
+- The old scheme check compared letters only, so "It's" read as "its" and was refused. `it's` is listed beside `it`
+  and `its`.
+- The old ghost check took "Ghost" after any non-letter, hyphen included. `*-ghost` keeps "Snow-Ghost".
+- The old title check counted only letters, digits and the hyphen as word characters, so "Dragonborn's" counted.
+  `dragonborn's` keeps it.
+
+Text with no words at all fails the scheme check in C++ whatever the rules say, as it always did.
+
+**Verification.** The characterization test `ContentChecks.engine.test.cpp` holds 56 assertions over the five
+validators, including each quirk above, contractions, a name-then-modal split by a comma, and words that only begin
+like refused ones. They passed against the unmodified code, then unchanged. A further case builds German, Russian
+and Japanese tables from synthetic files:
+
+- a German *zu*-clause scheme, with no English rule mixed in;
+- a Japanese plain-form scheme against its polite form;
+- a disabled check;
+- *Drachenbluts*, the Russian genitive of the title, and the Japanese title written without spaces;
+- German and Russian name endings, and a Japanese name inside unseparated text;
+- a compounded German ghost;
+- a German fallback label stripping after *der*.
+
+The shipped-files test now bites: English defines `Scheme`, `PlayerTitle` and `Ghost`, so every language's file will
+have to give each of them rules or a reason.
+
+**The intended behaviour changes**, each only for text outside ASCII:
+
+- A player's name word must be three *code points* long, not three bytes. A two-letter Cyrillic name such as *Ян*,
+  four bytes, used to count and now does not. This is the change the plan names.
+- `SameLine`, and the case-insensitive comparison in title stripping, fold case in every script rather than in ASCII
+  only, as **Validators that read content** prescribes. "Ölfrún's" and "ölfrún's" are now the same line, and a test
+  pins it.
+
+Every English input behaves exactly as before.
+
+`pwsh -File build.ps1 test`: 572 of 572 passed. `build.ps1 build` is clean.
+
+#### Step 18 — Name matchers in the player's script
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Role names and named-in-text checks work in every script.
+
+- `PlotCandidates::Closest` splits words with Step 1's splitter. It treats capitalization as a signal only in cased
+  scripts, and matches whole names as substrings when `WordSeparated = false`.
+- `PlotCasting::ContainsWord` allows the table's `Name.Suffixes`.
+- Both take the table as a parameter.
+
+**Verification:**
+
+- A characterization test of both over today's English cases, first passed against unmodified code, then unchanged.
+- New cases use real localized names taken from the Spriggit export's Russian, Japanese, Chinese, Polish and German
+  strings. For each, a role naming the person resolves to them. A genitive (*Veleths*, *Ульфрика*) counts as naming
+  them. A name inside a longer word does not.
+
+Done. A shared helper in `TextMatch`, `IsNameWord`, says whether a word of some text is a name word, bare or carrying
+one of the table's `Name.Suffixes`. `StartsName` says a word reads as the start of a name: a capital in a cased
+script, any letter in a caseless one. On those, three matchers moved to Step 1's splitter.
+
+- **`PlotCandidates::Closest`**, whom a role's words name. Every word of a name counts in a caseless script. Where
+  words are not separated, a name's words are found inside the text.
+- **`PlotCandidates::NamedIn`**, whom a scheme names. The plan did not list it, but it shared `Closest`'s splitter,
+  and its three-*byte* minimum became three code points.
+- **`PlotCasting`'s `NamesPerson`**, whom a step's sentence names. Its four-byte minimum became four code points.
+  `ContainsWord` and its hand-written word boundaries are gone, since the splitter's boundaries and the suffixes now
+  give the same answers.
+
+`PlotCandidates::Request` gains a `table`, null for the session's, and `ResolveRoles` passes it on to the request it
+builds per slot. `QualifyAgent`, `EligibleAgents` and `NamedIn` take one, defaulting to the session's.
+
+Two English lists moved into `[Matching]` along with them. The plan did not name them, and each matcher read one:
+
+- `Name.Titles`, the honorifics `NamesPerson` ignores ("Captain" alone is no particular captain);
+- `Item.Articles`, the articles a thing's name may open with, which the item matcher sets aside.
+
+The settlement matcher now reads the text with the same splitter and endings. The item matcher folds case with Step 1.
+
+**Verification.** First, characterization cases over today's English, passed against the unmodified code and then
+unchanged:
+
+- a possessive, a hyphenated name and a lowercase name as a role;
+- in step sentences: possessives, case, a bare title, a name inside a longer word, a short word of a name, and an
+  *O'Ryan* who is not *Ryan*.
+
+The existing `NamedIn` and role-resolution tests already pinned the rest. Then `NameMatchers.engine.test.cpp` used
+Ulfric Stormcloak, Balgruuf the Greater and Hulda as the game names them in five languages, over synthetic language
+files built by a new `testsupport` helper, `Synthetic`:
+
+- in Russian, a role in the genitive and the instrumental resolves, and a name inside a longer word or in lowercase
+  does not;
+- in Japanese and Chinese, written without spaces, a role resolves by a name's own part inside the sentence;
+- in Polish and German, genitives resolve, *Huldastraße* does not, and *Ulfricssons* does not name Ulfric.
+
+For each language, a scheme naming the person names them, and a step naming them is not given to them.
+
+**One English behaviour change, and it is a fix.** The settlement matcher used to drop "'s" from the text's words
+but not from the settlement's own name, so *Shor's Stone* could never be named. It now reads both the same way.
+
+`pwsh -File build.ps1 test`: 577 of 577 passed. `build.ps1 build` is clean.
+
+### Phase E — Output language
+
+#### Step 19 — The output-language line and `[Prompt.Form]`
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Every content-producing prompt asks for the active language, and only for its content fields.
+
+1. Confirm the provisional table under **The output-language line**, field by field, by tracing where each field
+   ends up. Correct the table in this document before writing code.
+2. Add `output_language`, `content_fields` and the `[Prompt.Form]` values to each content-producing context.
+3. Add the shared include, rendered only when the language is not English.
+
+**Verification:**
+
+- Offline render comparison of every affected prompt under English: identical to before.
+- A German-table rendering of each, recorded in the write-up, showing the line names exactly the content fields and
+  carries the German form.
+
+Done. The tracing corrected the table above in two places, `action_select`'s `narrative_note` and the visit's
+`narration`, as its note says.
+
+- **`LanguageTable::Table::PromptForm(field)`** returns the shape the language's `[Prompt.Form]` asks of a field, or
+  null. The section is open-ended by field name, compares names without regard to case, takes the overlay over the
+  shipped file, and never reads English. The census treats it as known, like `[Matching]`.
+- **`PromptLanguage::Add(ctx, fields, table)`** sets `output_language` (the table's English `Name`),
+  `content_fields`, and `prompt_forms`: a `{field, form}` for each content field the file gives a form for. Each of
+  the six context builders calls it with the session's table and its prompt's fields from the table above.
+- **`components/narrative_engine/output_language.prompt`** renders nothing when `output_language` is English.
+  Otherwise it renders one line, which each of the six prompts includes as the last line of its user turn:
+
+  ```text
+  Write `ambition`, `scheme` and `finish` in German. Write `scheme` as an infinitive clause ending in "zu" plus the
+  verb, e.g. "das Amulett zu stehlen". Every other field keeps the exact values described above.
+  ```
+
+  (It is one line in the prompt; it is wrapped here for width.)
+
+No language file ships a `[Prompt.Form]` yet. The drafts in Step 26 carry them.
+
+**Verification.** The six prompts were rendered offline through the Inja harness, eight contexts in all: plain and
+memory-motivated letters and visits, a gossip seed, an ambition, an action selection and a story evaluation.
+
+- **English.** For each context, HEAD's tree with no new fields and the working tree with what `Add` sets under
+  English. All 8 renders are byte-identical.
+- **German.** Each context under a German table, with the form above for `scheme`. Each render differs from the
+  English one by exactly one added line, before `[ end user ]`:
+
+  | Prompt           | The line                                                                                   |
+  | ---------------- | ------------------------------------------------------------------------------------------ |
+  | `letter_compose` | Write `body` and `letter_label` in German. Every other field keeps the exact values …      |
+  | `visit_compose`  | Write `narration` in German. Every other field keeps …                                     |
+  | `gossip_seed`    | Write `bands` in German. Every other field keeps …                                         |
+  | `plot_ambition`  | Write `ambition`, `scheme` and `finish` in German. Write `scheme` as an infinitive clause … |
+  | `action_select`  | Write `narrative_note` and `narration_prose` in German. Every other field keeps …          |
+  | `story_eval`     | Write `narrative_note` in German. Every other field keeps …                                |
+
+Unit tests cover `PromptForm` (the language's own file, the overlay and case, never English, no census complaint)
+and `Add` (English with no forms; German with a form only for the prompt's own fields).
+
+`pwsh -File build.ps1 test`: 579 of 579 passed. `build.ps1 build` is clean.
+
+### Phase F — Surfaces
+
+#### Step 20 — The dashboard formatter, and the shared fixture
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The dashboard formats exactly as C++ does.
+
+- A TypeScript port of `TextTemplate`'s rendering, for the dashboard's own strings. Plural categories come from
+  `Intl.PluralRules`, with every plural falling back to `other` if `Intl` is unavailable (see **Dashboard** above).
+- A committed fixture of template, arguments, grammar and expected output.
+- Both sides read the fixture: C++ through a `*.test.cpp`, and TypeScript through a new `npm test` (compile the
+  formatter with `tsc`, run the fixture under `node --test`).
+
+**Verification:** both test runs pass on the same fixture. The fixture covers every form and every plural family.
+Because the TypeScript side takes its categories from Node's CLDR data, the shared fixture also checks the C++
+hand-written families against CLDR.
+
+Done.
+
+- **`dashboard/src/i18n/textTemplate.ts`** ports `Parse`, `Render`, `Phrase` and `JoinList` line for line. Its
+  options take the language's `Code` instead of a family. `pluralCategory` reads `Intl.PluralRules` and gives
+  `other` when it is missing, and `pluralsAvailable` reports whether it is there. Nothing imports the port yet;
+  Step 21 does.
+- **`testsupport/fixtures/text_template.json`** holds three lists:
+  - `plurals`: CLDR's category for 24 numbers, from 0 to 2,000,000 and some negatives, in ten languages (the nine,
+    plus Portuguese), each with the family its language file names;
+  - `renders`: 74 cases covering every form, select on a person and on text, nesting, `#`, missing arguments,
+    lists of 0 to 4 items, phrase trimming over non-ASCII spaces and an ideographic full stop, and sentence
+    capitals in Cyrillic, accented Latin, a caseless script and a character outside the BMP;
+  - `rejects`: 12 templates both must refuse.
+- **`src/TextTemplate.fixture.test.cpp`** runs the fixture through the C++, and finds it through a new
+  `NARRATIVEENGINE_FIXTURES_DIR`. **`npm test`** compiles the port with `tsc -p tsconfig.test.json` and runs
+  `dashboard/test/textTemplate.test.mjs` under `node --test`, including a case with `Intl.PluralRules` removed.
+  `build.ps1 test` now runs `npm test` after `ctest`, so neither side can be skipped.
+
+The fixture found two disagreements, and both are fixed.
+
+**CLDR's `many` for exact millions.** Node said Italian, Spanish and French call 1,000,000 `many`, and Portuguese
+too. The C++ called it `other`. A new `spanish` family (one for 1, `many` for an exact million) now serves Spanish
+and Italian, which had shared `one_other` with English. `french` gains the same `many`. The design's paragraph on
+plural rules says so. No count the plugin shows comes near a million, and a template without a `many` branch takes
+`other`. But a translator who writes one would have seen it on the dashboard and never in C++.
+
+**Case mapping.** C++ capitalizes through utf8proc's simple one-letter mapping. A browser's `toUpperCase` is the full
+mapping, which makes `ß` "SS". A scratch probe compared every code point's two mappings. The port keeps a letter
+whose full mapping is several letters, except where a simple mapping exists: `ß` to `ẞ`, the 27 Greek letters with
+an iota subscript, and `İ` to `i`. Those 29 sit in a small table. The probe's only other differences were letters
+added in Unicode 17, which utf8proc has and Node 22's ICU does not yet. Every browser lags Unicode somewhere, and the
+port leaves such letters alone.
+
+`pwsh -File build.ps1 test`: 582 of 582 C++ tests and 4 of 4 dashboard tests passed. Each side fails when one
+fixture expectation is changed. `build.ps1 build`, including the Rollup bundle, is clean.
+
+#### Step 21 — Dashboard strings
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The dashboard shows no English that does not come from the language file.
+
+- Every literal in `dashboard/src` becomes a `t()` key, and `english.ini` gains `[Dashboard]`.
+- C++ sends the table with the initial state.
+- C++ sends ids for phases, beats and outcomes, and the dashboard labels them itself.
+- `<html lang>` follows `Code`.
+- The status banner shows Step 4's font mismatch warning.
+
+**Verification:**
+
+- The bundle builds.
+- A throwaway script confirms two things: every `t()` key exists in `english.ini`, and no JSX text node or label
+  attribute outside a `t()` call contains a letter.
+- The `plots.sample.json` fixture still renders through the dashboard's dev entry point.
+
+Done. `english.ini` gains a `[Dashboard]` section of 280 strings, and every component reads its words through `t()`.
+
+**`[Dashboard]` is declared by English's file**, as the design now says under **Language files**. The keys are the
+ones English has, and each key's placeholders are the ones its English template uses. A new
+`TextTemplate::ImpliedSignature` reads them: a number where the template pluralizes, a list where it joins, text
+otherwise. The keys resolve and validate like declared ones, so a translation's typo, a stray placeholder, or a
+plural on a value English treats as text falls back to English and is named in the census.
+`LanguageTable::Table::Strings()` returns the resolved section in English's order.
+
+**What C++ sends.** Each state carries a `language` block:
+
+- `code`, `name` and `native_name`;
+- the six grammar fields the formatter port reads;
+- the font check (`covered`, `not_covered` or `unknown`, with the font set);
+- `strings`.
+
+It is built once, since the language never changes within a session, and attached to every push rather than only the
+first. A push the view misses while it loads therefore costs nothing.
+
+**Ids, not English.** Most of what the dashboard labels already arrived as ids, and only three fields still sent
+English:
+
+- The hotkey was `"Ctrl+F7"`. It is now `{key, named, code, ctrl, shift, alt}`. A key with its own legend (`F7`,
+  `Q`) shows it; the named ones (`esc`, `space`, the arrows) and the modifiers take `key.*` strings. An unknown code
+  shows `DIK #{code}`.
+- `last_evaluation.action` mixed a beat id with a "(failed: …)" sentence the dashboard picked apart with a regex. It
+  is now the beat id alone, beside a `failure` that the new `DecisionLog::FailureText` words from `[Decision]`.
+- `last_evaluation.narrative_note` now goes through `NoteText`, as the decision list's already did.
+
+The dashboard labels everything it was sent as an id: phases (`phase.*`), beats (`beat.*`), AlphaCanon signals
+(`signal.*`), letter-slot, visit-mode, visit-outcome and plot-step states, plot statuses and outcomes, faction ranking
+methods, timer clocks and tabs. `label(prefix, id)` falls back to the id when no string exists, for a beat a test
+registers. A side effect is that the dashboard now shows "Rising Action" where it showed `RisingAction`, and "in
+dialogue" where it showed `InDialogue`.
+
+**The rest of the surface.**
+
+- `t()` lives in `src/i18n/strings.ts` and renders through Step 20's port with the session's grammar and plural rules.
+  `setLanguage` sets `<html lang>` from `Code`.
+- Strings that emphasize a number mark it with `<b>`, `<strong>` or `<i>`, and a small `Rich` component renders those
+  three tags and nothing else. A translation can therefore move the emphasized number along with its words. The gossip
+  counters needed this, because their bold figures sat between words a translation must be free to reorder.
+- The status banner shows Step 4's font warning when the game's font set lacks the language's letters. The
+  dashboard's own font is the browser's, so it can say what the game cannot show. The banner also carries the design's
+  notice when `Intl.PluralRules` is missing.
+- Before the first state there is no table, so the waiting placeholder shows "…".
+- Numbers keep the browser's default formatting (`1.5` rather than `1,5`). Number formatting was never in this
+  step's scope.
+
+**Verification.**
+
+- `npm run build` (through `build.ps1 build`) and `tsc --noEmit` are clean.
+- The throwaway check parsed every `.ts` and `.tsx` file with the TypeScript compiler. A key built from a template
+  literal was expanded over the ids it can take. All 280 keys asked for exist in `english.ini`, and none of its keys
+  goes unused. No JSX text node or display attribute outside `t()` contains a letter. What the check listed for
+  review was ids, colours, bridge arguments, and the bootstrap `throw` for a missing `#root`, which no player can see.
+- A throwaway render probe compiled the dashboard for Node. It rendered every tab through `renderToString` against a
+  state the C++ composed in the `DashboardUIManager` engine test, with `plots.sample.json` as the Plots tab:
+  - **English.** No key rendered as itself. Spot checks found "action in flight: Ambush (started 1m 15s ago)",
+    "Active signals: in dialogue and in combat", "Ctrl+F7", the step nodes' accessible names, and the gossip counters'
+    `<b>` emphasis.
+  - **A marked language.** Every string was wrapped in «», the code was `de`, and the fonts were `not_covered`. Every
+    word outside the marks was data: event lines, plot titles and names, rumor text. `<html lang>` became `de`, and
+    the banner showed the font warning naming Deutsch.
+- `LanguageTable` tests cover `[Dashboard]`: English's keys and order, a translation held to English's placeholders,
+  a key English lacks, and the overlay. `TextTemplate` tests cover `ImpliedSignature`.
+- The shipped-files test now counts `[Dashboard]` among English's keys.
+- The fake PrismaUI's last-argument buffer grew from 32 KB to 256 KB, since the state now carries about 20 KB of
+  strings.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 22 — MCM translation files and the language setting
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The MCM page is translatable, and offers the language override.
+
+- `config.json` switches to `$NE_…` keys.
+- `Interface/Translations/NarrativeEngine_ENGLISH.txt` ships in UTF-16 LE with a BOM, as `$KEY<TAB>text`.
+- A *Language* dropdown offers *Auto* plus the shipped languages, bound to `[Localization] sLanguage`.
+
+**Verification:** a throwaway check that every `$` key in `config.json` is defined in the translation file. Its
+encoding, BOM and line format must match a translation file from another mod installed in the modlist that is known
+to work in game.
+
+Done.
+
+- **`config.json`** shows only `$NE_…` keys. The one exception is the mod's own name, which no language translates.
+- **`Interface/Translations/NarrativeEngine_ENGLISH.txt`** holds those 15 keys.
+- **The new *Language* section** holds a `menu` bound to `sLanguage:Localization`.
+
+**How the menu stores the language.** MCM Helper's source settled this; its documentation does not say. A `menu`
+stores the very option string its dropdown shows (`OnOptionMenuAccept` stores `options[index]`), and the field shows
+the stored string. So the options are translation keys, which SkyUI words as it draws them: `$NE_Language_Auto` and
+one `$NE_Language_<stem>` per shipped language. MCM Helper's own SkyUI page uses `$`-keyed options the same way.
+`Localization::Resolve` now reads that form, case-insensitively: `$NE_Language_german` names `german`, and
+`$NE_Language_Auto` counts as no setting, so the log does not call it a missing file. A stem written by hand still
+works. The MCM seed's `[Localization]` holds `sLanguage=$NE_Language_Auto`, so the field reads *Auto* before the
+player touches it. Today the menu offers *Auto* and English, the only shipped language; Step 26 adds an option and an
+MCM file per draft.
+
+**Keeping a UTF-16 file in the repository.** `.gitattributes` gives the translation tables
+`working-tree-encoding=UTF-16LE-BOM eol=crlf`. The working tree, and so the deployed file, is what the game reads,
+while the repository stores UTF-8, so diffs stay readable. The pre-commit hooks skip that folder, since every text
+hook would rewrite UTF-16 as bytes. A delete-and-checkout produced a UTF-16 LE file with a BOM, CRLF line endings and
+no final newline.
+
+**Verification.**
+
+- A throwaway check found all 15 `$` keys in `config.json` defined in the table, with none unused.
+- It compared the table against `Experience_ENGLISH.txt` from *Experience - MCM*, an MCM Helper translation table
+  installed in the modlist. The two matched on all five measures: the `FF FE` BOM, CRLF with no bare LF or CR, no
+  final newline, and every line `$KEY<TAB>text`.
+- New `Resolve` cases cover the stored form: a stem in either case, *Auto* with nothing reported skipped, and a
+  stored language with no file.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean, and
+it deploys the table with the rest of `statics/`.
+
+#### Step 23 — Manifest languages, and the configure check
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** SkyrimNet's hub lists what ships, and the repo cannot drift from it.
+
+- `manifest.json` gains `languages`.
+- The configure step fails unless that array equals the set of `Code` values under `Languages/`.
+
+**Verification:** configure succeeds with `["en"]`. A throwaway mismatch makes it fail with a message naming both
+sets, and is then reverted.
+
+Done. `manifest.json` gains `"languages": ["en"]`. Beside the id and version checks, configure now reads that array
+and the `Code` line of every `Languages/*.ini`, skipping players' `.custom.ini` overlays. If the two differ as sets,
+it fails. The `Languages/` glob is `CONFIGURE_DEPENDS`, so adding a file re-runs the check. `Code` is read whole, as
+the loader reads it, since a `;` after a value is part of the value.
+
+**Verification.** Configure succeeded with `["en"]`. Each throwaway case below was reverted at once, and configure
+was then clean:
+
+- The manifest said `["en", "de"]`. Configure failed with "manifest.json languages [de, en] do not match the Code of
+  the shipped language files [en]".
+- A `german.ini` with `Code = de` was added. Configure failed the other way, naming `[en]` against `[de, en]`, and a
+  `german.custom.ini` beside it was ignored.
+- A `Code = de` with CRLF line endings and trailing spaces matched a manifest of `["en", "de"]`.
+- A `Code = de ; iso` did not match, and was shown as the one item it is.
+
+### Phase G — The other eight languages
+
+#### Step 24 — French, German, Italian, Spanish and Polish drafts
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The five Latin-script languages ship as drafts.
+
+For each language:
+
+- **A language file**, with `Status = draft` and the correct `Fonts`.
+- **Every declared key translated.** Gender and plural selects are used where the language needs them.
+- **`[Matching]` rules for every check**, each term citing the Spriggit record it was taken from.
+- **`[Prompt.Form]`** for every spliced field.
+- **An MCM translation file.**
+
+`manifest.json` gains the five codes.
+
+**Verification:**
+
+- The shipped-files test passes with zero rejections, and every check has rules or a reasoned `Disabled`.
+- A throwaway script confirms every cited record exists in the export and that its string in that language contains
+  the cited term.
+- Configure passes the manifest check.
+
+Done. `french.ini`, `german.ini`, `italian.ini`, `spanish.ini` and `polish.ini` ship as drafts, each with an MCM table
+(`NarrativeEngine_<LANGUAGE>.txt`, in the same UTF-16 form as English's). The Language menu offers the five, and
+`manifest.json` lists `en, fr, de, it, es, pl`. Each draft was written by one agent from one brief, and each agent
+checked its own file with the two checkers below before handing it back.
+
+**How each language fits the templates.**
+
+| Language | Scheme spliced as                              | Scheme check                                                                                    |
+| -------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| French   | "dans le cadre de mon plan pour {scheme}"      | rejects a subject, article or preposition first, or a conjugated verb second                      |
+| German   | "als Teil meines Plans, {scheme}"              | requires a zu-infinitive at the end (`zu *, *zu*`), and rejects "um", a subject, or a verb second |
+| Italian  | "come parte del mio piano per {scheme}"        | requires an infinitive first (`*re`, with clitics), and rejects pronouns, articles and verbs     |
+| Spanish  | "mi plan para {scheme}"                        | requires an infinitive first (`*ar`, `*er`, `*ir`, with enclitics), and rejects as Italian does   |
+| Polish   | "w ramach mojego planu, by {scheme}"           | requires an infinitive first (`*ć` and the irregulars), and rejects nouns in `-ość`                |
+
+Each `[Prompt.Form] scheme` asks for exactly that shape, with an example, and sits directly above `[Matching]`. The
+test plots' schemes in `[Plot.Test]` are written in that shape, so they pass their own language's check.
+
+- **Grammar.** Every draft leaves `IndefiniteArticle` empty, because each language's article follows the noun's
+  gender, so a made item is named bare. German sets `PhraseLowercaseFirst = false`. Polish names keep the nominative
+  by the game's own devices: a noun that carries the case ("w okolicy miejsca {place}"), or a colon
+  ("List od: {sender}").
+- **Gender and plurals.** Gender agreement selects on the person wherever the grammar needs it (participles,
+  pronouns, Polish past tenses), with the masculine as `other`. Counts use every category of their family: Polish
+  writes one, few, many and other throughout.
+- **`[Matching]` terms are the game's own.** The player's title is *Enfant de dragon*, *Drachenblut*, *sangue di
+  drago*, *Sangre de Dragón* and *Smocze Dziecię*. The ghost word sits where each language puts it: German compounds
+  it (`*geist`), and the others match it at either end. Every literal word carries a `; cite <term>: <record>`
+  comment.
+
+**Found while drafting, and fixed here.**
+
+- **English's dashboard counts are now plurals.** Sixteen `[Dashboard]` lines wrote a count as a bare `{n}`, so
+  their signature said text, and no translation could make a word agree with it. Polish needs that for nearly every
+  count. They now read `{n, plural, other {# born}}`, so English is unchanged and the count is a number. The section's
+  comment says why.
+- **German's quotes.** German's „…“ opening mark (U+201E) is not in the `en` font set, which a German game uses, so it
+  became »…«.
+
+**Found while drafting.** Both concern code, not language files, and both are fixed in Step 28a:
+
+- **`{kin}` was English in every language.** `[Gossip.Memory]`'s kin word is an association type's title ("Sister"),
+  and those are plain, unlocalized strings in the game's data, so a German memory read "Meine Sister Hulda".
+- **`{kin}` described the wrong person.** `GossipContent.cpp` picked the label by the listener's side and sex, which
+  names what the teller calls the listener. The template uses it for the teller: "My {kin} {teller} told me".
+- **Reviewers' list.** Each draft's report named the places a native speaker should look first:
+  - French and Italian cannot elide or contract before a name ("de Aela", "in La Giumenta Bardata").
+  - Made items read bare, without an article.
+  - Ammunition names are singular after a measure word ("ein Bündel Eisenpfeil").
+  - The data files' names (factions, items) stayed English until Step 28a wrote their `[Data.*]` overrides.
+
+**Verification.**
+
+- **Plugin validator.** The shipped-files test loads all six files and passes: every draft has zero rejections, and
+  rules for all three content checks.
+- **Lint.** A throwaway lint compared each draft with English and reported 0 problems for each. It checked that the
+  draft has all 713 keys and no others, and that placeholders are used only as their signatures allow (plural on
+  numbers, select on people, an `other` everywhere). It found every cited record in the export, holding a string in
+  that language that contains the cited term, and found every MCM key translated.
+- **Fonts, measured.** A throwaway script read each vanilla font set's glyphs, keeping only those that all four fonts
+  the game writes our text in can draw. It then checked every character each draft shows in game:
+  - French, German, Italian and Spanish are covered by all five sets.
+  - Polish is covered by `pl` and `ru`, as **Encoding** predicted.
+  - Each header's `Fonts` says so.
+- **MCM tables.** All six match the known-working table's form (BOM, CRLF, no final newline, `$KEY<TAB>text`), and
+  each defines exactly the keys `config.json` uses.
+- **Configure.** It passes the manifest check with the six codes.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean, and
+it deploys all six language files and MCM tables.
+
+#### Step 25 — Russian, Japanese and Chinese drafts
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The remaining three ship as drafts.
+
+As Step 24, for the three scripts that most test the design:
+
+- Russian's three-way plurals and case-ending suffixes;
+- Japanese and Chinese's `WordSeparated = false` and verb-final rules;
+- Chinese's empty plural family.
+
+**Verification:** as Step 24.
+
+Done. `russian.ini`, `japanese.ini` and `chinese.ini` (Traditional, as Skyrim ships it) join the other six as drafts,
+each with its MCM table. The Language menu offers all nine, and `manifest.json` lists every code, `zh` among them.
+They were written as Step 24's were, from the same brief plus an addendum on the three scripts.
+
+| Language | Scheme spliced as                              | Scheme check                                                                                       |
+| -------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Russian  | "Все это — часть моего плана: {scheme}."       | requires an infinitive first (`*ть`, `*ться`, `*ти`, `*чь`, with "не"); rejects nouns ending like one |
+| Japanese | "{scheme}という計画の一環として"               | requires a plain-form ending (う, く, … る); rejects polite and past endings and a stated subject     |
+| Chinese  | "為了{scheme}，…"                              | rejects a stated subject or purpose word first, and an aspect or question particle last             |
+
+- **Russian** uses one, few, many and other throughout, and selects on the person for every past tense. It keeps
+  names in the nominative, as Polish does. Its `Name.Suffixes` holds the case endings a name takes after its last
+  letter (а, у, ом, е). The `ru` font set has no ё or №, so the draft writes е, as the game does.
+- **Japanese and Chinese** set `WordSeparated = false`, so each `[Matching]` entry is a run of characters at its
+  position. The family is `none`, so every count has only `other`. The player's title is ドラゴンボーン and 龍裔, and
+  the ghost word ends the name: 亡霊 and 鬼魂.
+
+**Fonts, measured.** Japanese is drawn only by `ja`, and Chinese only by `cn`. Russian is drawn by `ru`, `ja` and
+`cn`, since both CJK sets carry Cyrillic. Each header says so.
+
+**MCM language names, fixed for all nine tables.** The MCM is drawn in the game's font, and the game picks the table
+by its language, so every name in a table must be drawable by that language's font set. Writing each language in its
+own script failed that. "Русский", "日本語" and "中文" are blanks in the `en` and `pl` sets, and the CJK names are blanks
+in `ru`. Where a table's font set cannot draw a language's own name, the table now gives the name in its own
+language ("Russisch", "Японский"). A throwaway script checked every string in all nine tables against its font set,
+and the German table's „…“ became »…«, as `german.ini`'s had.
+
+**Found while drafting.** These are code, not language files, and all are fixed in Step 28a:
+
+- **Name parts were too short in CJK.** `PlotCasting`'s `NamesPerson` skipped name parts shorter than four code
+  points, `PlotCandidates::NamedIn` those shorter than three, and `PlotStepParse`'s player-name check those shorter
+  than three. Most Chinese and Japanese name parts are two or three characters (紮格, 安卡諾), so in those languages
+  the guard against casting a step's subject to carry it out was off for most people, and the bug it was written for
+  (Captain Veleth sent to shadow Captain Veleth) came back.
+- **The full stop in `went_on`.** `PlotMemories` stripped only an ASCII `.` from a failed step's memory before it
+  appended `went_on`, so a sentence ending 。 kept it.
+- **Space-delimited lists.** `Title.Strip.Start` and `Item.Articles` stripped a prefix only when a space followed it,
+  and Chinese never writes one.
+- **`{kin}` was English** in these three as in the other five (see Step 24).
+
+**Verification.** As Step 24:
+
+- **Plugin validator.** The shipped-files test loads all nine files and passes, with zero rejections and rules for
+  every content check.
+- **Lint.** It reports 0 problems for each new draft, citations included.
+- **Fonts.** Each draft's characters are covered by its own font set.
+- **MCM tables.** All nine match the known-working table's form and define exactly the keys `config.json` uses.
+- **Configure.** It passes the manifest check with nine codes.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 26 — The README
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Players know what works, what does not, and how to change it.
+
+- The language Q&A is rewritten: detection, the override, the overlay file, and draft status.
+- The font fix for an override whose script the game's fonts do not cover.
+- The known gaps: SkyrimNet's own UI text, the MCM following the game's language, and English-only memory retrieval.
+- The advice not to edit our prompts for another language is replaced.
+
+**Verification:** `format.ps1`. Every setting, path and file name the README gives is checked against the repo.
+
+Done. The README's one language answer, which told players not to edit the prompts, became six Q&As:
+
+- which languages ship, and that eight are unreviewed drafts;
+- how the language is chosen (the game's own, or the MCM's *Language* menu, from the next launch), and how to add a
+  language Skyrim does not ship;
+- the one-line `[Fonts] sFontConfigFile` fix, per script;
+- the `.custom.ini` overlay;
+- how a native speaker can help, starting with `[Prompt.Form]` and `[Matching]`;
+- what still shows in English: SkyrimNet's screens, the MCM under an override, the data files' own names, the kin
+  word, and the logs. The English-only memory retrieval is stated as SkyrimNet's to improve.
+
+The advice not to edit the prompts now has a reason that holds: the prompts already ask for the player's language,
+field by field.
+
+**Verification.** `format.ps1` is clean. Every setting, path and file name was checked against the repo:
+
+- `sLanguage` under `[Localization]`, the key the MCM menu writes (`sLanguage:Localization`), in
+  `Data/MCM/Settings/NarrativeEngine.ini`;
+- the `Languages/` folder and its nine files, eight of them `Status = draft`, and the `.custom.ini` suffix
+  (`kOverlaySuffix`);
+- `PlotFactions.ini`, `PlotItems.ini` and `AttackerGroups.ini`;
+- `sFontConfigFile` under `[Fonts]`, which `Localization` reads;
+- the four `FontConfig_*.txt` names and the default `FontConfig.txt`, which are the files in the game's Interface
+  archive. That each set also draws English was measured in Step 24.
+
+The claims that a fallen-back or unmatched line is logged rest on the census lines `Localization::Load` writes.
+
+### Phase H — In-game checks
+
+#### Step 27 — The *Run checks* button
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** One button settles everything about real SkyrimNet rendering and real engine text that offline
+verification cannot.
+
+The button does three things:
+
+- **Renders a check prompt.** `narrative_engine_render_check` loads a sentinel file through a *computed*
+  `render_template` name, reads a field out of a check decorator's JSON, and words a loop variable and a `{% set %}`
+  variable through an `{% include %}`. It asks the model to repeat the three sentinels verbatim. The dashboard shows
+  pass or fail for each, from the response and from whether SkyrimNet reported a render error.
+- **Queues a notification** containing Latin-1 text the English font covers ("Café · Jörgen · naïve · Ærø ·
+  Ölfrún"), for the user to read once the dashboard closes.
+- **Shows the font-check result**, and whether the dashboard's `Intl.PluralRules` is available.
+
+**Verification:** the build. Unit tests cover the response check: a response containing both sentinels passes, and
+one missing either fails. The prompt passes the offline render comparison with SkyrimNet's rules stubbed.
+
+Done. The Settings tab opens with a **Checks** panel and its *Run checks* button.
+
+- **`narrative_engine_render_check.prompt`** asks the model to repeat three numbered lines. Each line holds a sentinel
+  only if one rendering rule holds:
+  1. `render_template("components\\narrative_engine\\render_check_" + render_check.file)` reaches
+     `render_check_sentinel.prompt`, whose fixed text is `RenderCheck::kFileSentinel`.
+  2. `ne_render_check(player.UUID)`, a new decorator, answers `{"sentinel": …}`, and the template reads `.sentinel`.
+  3. Inside a `{% for %}`, after a `{% set %}`, `{% include "components/narrative_engine/render_check_include.prompt" %}`
+     words both the loop's item and the set value.
+
+  The decorator and include sentinels are fresh for each run, so a reply cannot pass from memory. The "both
+  sentinels" of the verification are the include's two, the loop's and the set's, which must both come back.
+- **`RenderCheck`** (core, pure) makes the sentinels, the context and the decorator's record, and judges a reply.
+  **`RunChecks`** sends the prompt on the Director's model. Its record is under its own lock, the one state the
+  decorator reads from SkyrimNet's render thread. It judges the sanitized reply, logs the verdict, and pushes the
+  dashboard. A request SkyrimNet would not queue, and a failure SkyrimNet reports, each show as such, with SkyrimNet's
+  own words for the second.
+- **The notification** is a new `[Notify] font_sample` key: "NarrativeEngine font check: Café · Jörgen · naïve · Ærø ·
+  Ölfrún", with the lead-in translated in every draft. It posts whatever the debug-notification setting says, since the
+  button asked for it.
+- **The panel** shows a pass or fail for each sentinel, the font check, and whether `Intl.PluralRules` exists. The font
+  check is the one sent with every state since Step 21. Its 19 strings are in all nine language files.
+
+**Verification.**
+
+- **Unit tests** (`RenderCheck.test.cpp`) cover the verdict:
+  - a reply with every sentinel passes all three;
+  - the include passes only with both of its sentinels;
+  - each part fails on its own;
+  - an empty reply passes nothing;
+  - another run's sentinels do not pass this one.
+
+  They also cover the shape of the context and the decorator's record.
+- **The decorator test** now counts four registrations, and checks that `ne_render_check` answers empty while no check
+  runs. The template tests for that empty answer.
+- **Offline render.** Through the Inja harness, with the decorator stubbed to answer JSON, the prompt renders
+  `1: NE-FILE-4QX7`, `2: <decorator sentinel>` and `3: <loop>+<set>`.
+- **Strings and fonts.** The Step 21 key check finds all 299 `[Dashboard]` keys the dashboard asks for, and the font
+  measurement still covers every file by its own set.
+
+`pwsh -File build.ps1 test`: 586 of 586 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 28 — The *Language trial* button
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** One button measures the drafts against the real model, as described under **The language trial**.
+
+- `Localization` loads a read-only table on demand.
+- Plot birth runs on the plot worker against an explicit table. Steps 17 and 18 already pass it.
+- Each trial plot is discarded before it reaches `PlotState`.
+- Eight births run for each of English, German, Russian and Japanese. That is roughly 100 LLM calls, which the button
+  states before it runs.
+- Results go to the dashboard and `NarrativeEngine_Plots.log`, per language:
+  - births attempted and accepted;
+  - rejections by code and by check;
+  - distinct masterminds;
+  - three accepted plots' memories, rendered in that language.
+
+**Verification:**
+
+- The build.
+- An `*.engine.test.cpp` showing a trial birth never mutates `PlotState`, the occupancy table, the plot budget or the
+  RNG stream position.
+- An `*.engine.test.cpp` showing two tables can be read at once without touching the session's own.
+
+Done. The Plots tab has a *Language trial* button. Its confirmation states the cost, about 100 LLM calls, and that
+plot ticks wait behind it.
+
+- **`Localization::LoadShipped(stem)`** builds English plus that language's shipped file into a table the caller owns.
+  It reads no overlay, so the trial measures the draft as it ships, and it never touches the session's tables.
+- **Plot birth takes an explicit table.** `PlotBirth::Compose` gains `table` and an optional `refusals` list.
+  `refusals` records every refused answer, retried ones included, by stage and code. The table reaches all four places
+  birth read the session's: the ambition call's output-language line, `ParseAmbition`, the role resolver's request,
+  and planning. `PlotPlanning::Input::table` is what `RequestOf` and its agent check read. Steps 17 and 18 had already
+  given those functions the parameter.
+- **`PlotTrial`** runs on the plot worker. Each language gets eight births, and each birth draws its shortlist the way
+  `PlotTick` does. The draw is filtered and shuffled the same way too. Two things differ:
+  - It reads the live state through a `const PlotState&`, so by type it cannot add a plot, engage an occupancy row,
+    spend an id or the budget, or advance the live RNG.
+  - It draws from a random stream of its own.
+
+  The composed plot is then dropped. The draw's predicates are a parameter, the live game's by default.
+- **Results** go to the dashboard after every birth, and to `NarrativeEngine_Plots.log` as `Language trial:` lines.
+  For each language they hold:
+  - births attempted and accepted;
+  - every refusal by code, and by the check behind it (`Scheme`, `PlayerTitle`, or `names` for the name matchers);
+  - the number of distinct masterminds;
+  - up to three accepted plots' memories, each the mastermind's memory of doing the first step themselves, rendered in
+    that language.
+
+  A session that cannot answer decisions runs nothing and says so. The panel's 13 strings are in all nine files.
+
+**Verification.**
+
+- **The build** is clean.
+- **`PlotTrial.engine.test.cpp`, the live state.** A trial birth runs on a real plot worker under the fake SkyrimNet,
+  with a German table and a three-person population. It draws a shortlist, composes, and is refused at the cast call
+  twice, as a real birth would be. Its own stream moved. The live state did not: same plots, the same occupancy rows,
+  next id, born count, game day and RNG state.
+- **The same file, two tables.** German and Russian load side by side, each with zero rejections and different
+  `[Dashboard]` strings. The session's table is the same object, in the same language, before and after. English
+  loads alone, and a language with no file loads nothing.
+
+`pwsh -File build.ps1 test`: 588 of 588 C++ tests and 4 of 4 dashboard tests passed.
+
+#### Step 28a — Gaps the drafts found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Every user-visible string the drafts found still in English is in the player's language, and every defect
+they found in the code is fixed.
+
+Done.
+
+**The kin word.**
+
+- **Its direction.** `GossipContent`'s `DescribeTie` now reads the teller's side of the relationship and the teller's
+  sex. That is the word the listener's memory needs ("my daughter Hulda"), where before it read the listener's ("my
+  mother Hulda").
+- **Its language.** A new open-ended `[Data.Kin]` section words it, keyed by the association type's EditorID, the
+  teller's side and the teller's sex, as in `ParentChild.child.female`. An optional `.listener_male` /
+  `.listener_female` refinement is tried first, because some languages word a tie by who speaks of it (a woman's 公公
+  is a man's 岳父). An association type no row names, a modded one for instance, keeps its record's own word.
+- **English's rows.** English has rows for the 20 vanilla types, lowercased, because the record's capitalized "Sister"
+  sits mid-sentence. Two rows correct the game's own data: its grandparent words are swapped, and it gives the second
+  of a courting couple or of business partners no word at all.
+
+**The data files' names.** Every language file has `[Data.Faction]` (37 rows), `[Data.Item]` (25),
+`[Data.AttackerGroup]` (15) and `[Data.Kin]` (80) for every vanilla row. Each name uses the game's own term in that
+language where one exists, in the form and case that language's templates put the slot in. Where a template could not
+take a name's form, the template or the row was reworded:
+
+- articles that would have to contract ("de Aela", "a el Colegio");
+- plural factions under singular verbs;
+- the case of `{item}` in German.
+
+Rewording `{kin}`'s lines, French and Italian now carry the possessive in the row, and the others agree on the
+teller's sex.
+
+**Names written without spaces.** A new `TextMatch::ShortestNamePart` gives the fewest code points a name part needs
+before a matcher counts it as naming someone:
+
+- in a script with spaces, the matcher's own floor as before (`NamesPerson` 4, `NamedIn` and the player-name check 3);
+- in one without, two.
+
+There, a part is found as a run of characters. Two characters already make a whole given name (紮格) and too
+particular a run to occur by chance, while one is a syllable or an everyday word. All three matchers use it.
+`Title.Strip.Start` and `Item.Articles` likewise drop an opening that runs straight into the name in such a script,
+so Chinese's `一袋金幣` matches 金幣.
+
+**Elision.** French elides "de" and "que" before a vowel ("d'Aela", "Lettre d'Ulfric"), and no template can know
+whether the name it is given starts with one. A new `[Grammar] ElideBeforeVowel` lists the words that elide. When a
+placeholder's value opens with a vowel, accented ones included, and the text before it ends in one of those words as
+a word of its own, the word loses its last letter and joins the value with an apostrophe, keeping its case ("De" ->
+"D'"). French lists de, que, le, la, je, me, te, se, ne, jusque, lorsque and puisque; English lists none. Both
+formatters implement it, the TypeScript port now rendering through one shared buffer as the C++ does, and the shared
+fixture holds them to the same nine cases. Spanish needs none: it does not contract an article that belongs to a
+proper name ("de El Palacio Azul" is correct), and the lower-case articles of its faction rows were reworded away.
+
+**Templates reworded while filling them.**
+
+- Spanish's petition and expose lines put `{authority}` after "ante", not "a".
+- Italian's `[Plot.Audience]` became singular, to agree with the singular verbs of `{authority}`'s lines.
+- German's `expose.mastermind_told_succeeded` puts `{item}` in the accusative, as every other `{item}` already was.
+
+**The full stop.** A new `TextTemplate::TrimEnd` takes whitespace and the language's own
+`PhraseTrailingPunctuation` off a sentence's end, and `PlotMemories` uses it before appending `went_on`. Japanese's
+`went_on` is a clause again ("…失敗したが、別の手で…").
+
+**The sanitizer note.** CLAUDE.md said the sanitizer maps accented Latin letters to ASCII. It never has; it passes
+them, and every other script, through. The note now says so, as `docs/LLM_RESPONSE_HANDLING.md` always did.
+
+**Verification.**
+
+- **New tests:**
+  - **Kin direction.** A parent-and-child record whose two sides are worded differently names the teller's side.
+  - **Kin wording.** A record with the game's capitalized words and an EditorID takes English's `[Data.Kin]` word.
+  - **Listener refinement.** A row refined by the listener's sex wins over the plain row.
+  - **Names written without spaces.** In Chinese, a two-character name in a step keeps its bearer off it, and a scheme
+    naming it names them. A one-character name inside another word is nobody. A two-character player name is found.
+  - **Titles.** A Chinese title with no space after it comes off a fallback letter title.
+  - **`TrimEnd`.** It takes English's and Japanese's stops off, and only at the end.
+  - **Elision.** Nine new fixture cases cover it in both formatters: before a plain and an accented vowel, not before
+    a consonant, "que" keeping its case, a word not in the list, only a whole word, a placeholder inside a branch
+    after text outside it, a person argument, and a language with no list.
+- **Throwaway checks.** For every language, all four `[Data.*]` sections have every row and no stray one, and every
+  file is still covered by the font sets its header names.
+
+`pwsh -File build.ps1 test`: 590 of 590 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 29 — Run checks
+
+- [ ] Complete
+
+**[USER]**
+
+**Load a save, open the dashboard, press *Run checks*, wait for it to report, then close the dashboard.**
+
+**What to judge:**
+
+- All three render checks say **pass**.
+- The notification after closing reads "Café · Jörgen · naïve · Ærø · Ölfrún" exactly, with no blanks, boxes or
+  `Ã©`-style mangling.
+- The font check says the active font set covers English, and `Intl.PluralRules` is reported available. If it is
+  not, the dashboard's plurals all read as `other`. That is cosmetic, and a follow-up ports the C++ families.
+
+A failed computed-name check switches Step 10's include to an `if` chain over the beat set, as a follow-up step
+inserted here. A failed decorator check means `ne_plot_awareness` returns prose again, rendered from a template file
+through `TextTemplate`. A failed include check means the plot includes are inlined into each template that uses
+them, which a script can generate from the include files.
+
+#### Step 30 — Language trial
+
+- [x] Complete
+
+**[USER]**
+
+**Load a save, open the dashboard, press *Language trial*, and wait for it to finish**, which takes a few minutes.
+Then send the dashboard's result, or `NarrativeEngine_Plots.log`.
+
+**What to judge:** nothing by eye; the numbers decide. A language passes when:
+
+- its acceptance rate is within a third of English's from the same run;
+- no single check rejects more than a quarter of its births;
+- no role resolves to "names nobody" for a person the model copied correctly from the menu.
+
+Anything outside that is a draft-rule problem. Fixing it is a follow-up `[CLAUDE]` step, and the trial is re-run.
+
+Done, on the fourth run. The first three each failed a criterion; Steps 30a, 30b and 30c below close what they found.
+
+| Run | English | German | Russian | Japanese |
+| --- | ------- | ------ | ------- | -------- |
+| 1   | 7 of 8  | 1      | 3       | 3        |
+| 2   | 5       | 6      | 3       | 6        |
+| 3   | 7       | 6      | 7       | 6        |
+| 4   | 7       | 7      | 7       | 6        |
+
+The fourth run against the criteria:
+
+- **Acceptance.** Every language is within a third of English's 7 of 8.
+- **No check refuses a quarter of births.** The most any check refused was one: Japanese's `names_player`, a true
+  refusal, since its scheme made the player Arch-Mage.
+- **No copied name resolves to nobody.** Two roles named nobody, and neither was a name copied from the menus. "Ra'jirr"
+  is Frostmere Crypt's dungeon thief, who lives in no settlement and is in no population; the retry named somebody
+  else. "the court of Solitude" was the authority over Erikur, a thane, where a court stands in only for a jarl or a
+  chief.
+
+Everything else refused was the plot's: a mark or an authority who is dead, left out or out of reach, a place that is
+not a settlement, a goal not on the list. One answer was cut off and asked again.
+
+The memories name people and places in English in every language, as they should: those come from the game, which ran
+in English.
+
+#### Step 30a — What the first trial found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Every rejection the first full trial run blamed on our side is gone, so the re-run of Step 30 measures the
+drafts and the model rather than the trial.
+
+The first run (English 7 of 8, German 1, Russian 3, Japanese 3) failed every pass criterion. Its rejections had five
+causes:
+
+- **A trial pressed before the session's first tick skipped every birth.** It read a plot state and a profile library
+  that only a tick fills, so nobody was castable.
+- **German's `finish` was never asked for the form its check requires.** `SchemeOpensWithVerb` holds `finish` to the
+  `Scheme` rule, which in German ends in a *zu*-infinitive, but `[Prompt.Form]` gives that form for `scheme` alone. The
+  model followed the English "open with a plain verb", and the retry repeated it: 12 `finish_not_verb`.
+- **The model translated names.** Roles held "Мэйв Черный Вереск" and "ラエレク" for Maven Black-Briar and Raerek.
+  Nothing told the model to copy a name as it is spelled, and the Russian, Japanese and Chinese `scheme` examples
+  transliterate J'zargo and Tolfdir themselves. This breaks **Names are tokens in the player's script**.
+- **The trial's world stayed in the session's language.** Item and faction names are translated once, at load, so a
+  trial offered Russian answers an English item pool (`thing_unknown`) and spliced English items into Japanese
+  memories ("a private journalを盗む"). It breaks **The language trial**'s rule that each run uses its own table for
+  everything plot birth reads.
+- **The provider cut answers off mid-JSON.** All seven `not_json` answers stop partway through the object, well under
+  the token limit, more often the more tokens a language takes (English 0, Japanese 4). Six fell on the correction
+  retry, which a cut-off then wasted.
+
+Done.
+
+- **The trial does what a tick does first.** It installs the loaded plot state and refreshes the profile library
+  before it reads either.
+- **`finish` has a form wherever `scheme` has one.** Every language file's `[Prompt.Form]` has a `finish` line in the
+  shape its `Scheme` rule checks, with a note in the file's own language saying why. German's names the command form
+  ("zeige") as wrong. The `finish_not_verb` and `scheme_not_verb` retry notes ask for "the form asked for below"
+  outside English, instead of the verb-first form German's rule refuses.
+- **Names are copied, never translated.** The output-language line now forbids translating or transliterating the
+  name of a person, place or faction, allowing only the ending the language's grammar adds. It reaches every prompt
+  that includes it, letters and visits too. The ambition prompt's `roles` and its hard constraints say a role is
+  written exactly as spelled here and is never a description, and the `role_names_nobody` note says to copy the name
+  untranslated. The Russian, Japanese and Chinese `scheme` examples name nobody. Their `[Plot.Test]` rows keep their
+  names: those are player-visible text, and the game's own translation is the right spelling there.
+- **The trial translates its world.** `PlotMenus::Translated` copies a world with its item and faction names taken
+  from a table's `[Data.Item]` and `[Data.Faction]` rows, by the keys the load reads, falling back to the name already
+  there. `PlotItemPool::Item` keeps its EditorID and `FactionOption` its roster id for it. The trial builds one per
+  language, and `PlotBirth::Compose` takes the world it reads, defaulting to the session's.
+- **A cut-off answer is asked again.** `PlotBirth::IsCutOff` says whether an answer opens as a JSON object and does not
+  parse. `AskTwice` asks such an answer again once, with the same request, without spending the correction retry, and
+  logs the raw text as a warning. The refusal is still counted, so the trial reports how often it happens.
+
+**Verification.**
+
+- **New tests:**
+  - **Prompt forms.** Every shipped language asking a form of `scheme` asks one of `finish`, and every example either
+    form quotes passes that language's own `Scheme` check.
+  - **German finishes.** The trial's bare-infinitive and command finishes are refused by the shipped `german.ini`, and
+    the same finishes in the *zu* form are accepted.
+  - **`IsCutOff`.** Answers stopped partway through, fenced or not, are cut off. Whole answers, prose and empty ones
+    are not.
+  - **The re-ask.** A trial birth whose first answer is cut off makes three calls, not two.
+  - **The translated world.** A table's rows rename items and factions, a missing row keeps the old name,
+    settlements and recipes are untouched, and the session's world does not change.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 30b — What the second trial found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Russian roles hold the names they were given, and made items carry no English article outside English.
+
+The second run (English 5 of 8, German 6, Russian 3, Japanese 6) left Russian under the acceptance bar, with 13 of its
+retries `role_names_nobody`. English, German and Japanese were refused mostly for `role_not_admitted`, who the
+mastermind cannot reach, which is about the plot and not the language. Two causes were left:
+
+- **Russian answered in Russian from the first word, and copied its own names.** The model wrote even `reasoning` in
+  Russian, choosing a Cyrillic form for each person there ("Хронгер" for Hrongar), repeated it in `finish`, and then
+  copied it from `finish` into `roles`, the last field. It did so again on the retry that listed "Hrongar" among the
+  people it could name. The instruction to keep a name's spelling arrives at the end of the prompt, after the model has
+  already chosen.
+- **Made items kept English's article.** Recipes are phrased once, at load, through the session's table ("an Iron
+  Sword"), and the trial's world translated items and factions but left recipes alone, so a Russian memory read
+  "выковать an Iron Sword".
+
+Done.
+
+- **Names are chosen before the language changes.** The ambition prompt asks for `reasoning`, `goal` and `roles` before
+  `ambition`, `scheme` and `finish`, and asks for `reasoning` in English whatever language the others take. Nothing
+  reads `reasoning`. With the roles written while the answer is still in English, there is no translated name yet to
+  copy, and the prose that follows names the people the roles already hold.
+- **The trial phrases its recipes.** A `PlotRecipes::Recipe` keeps the game's bare name and whether it is ammunition,
+  and `PlotMenus::Translated` phrases it again through `PlotText::ItemPhrase` with the run's table.
+
+**Verification.**
+
+- **The translated-world test** now holds recipes to it: a weapon and a sheaf of arrows are phrased again through the
+  table's `[Plot.Item]`, a recipe with no game name keeps its phrase, and the session's are untouched.
+- The prompt change is measured by re-running Step 30, the only place a model answers it.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 30c — What the third trial found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** German's *zu*-clause may go on after a comma, and a whole name copied into a role is that person in any
+script.
+
+The third run (English 7 of 8, German 6, Russian 7, Japanese 6) put every language within the acceptance bar. Most of
+what it refused was the plot's: a dead or unreachable mark, a faction named as an authority. Three refusals were ours:
+
+- **German refused a *zu*-clause with a clause after it.** "den Kontrakt … zu vernichten, der bei Torbjorn
+  Shatter-Shield liegt" and "… zuzustellen, damit er ihn retten kann" are good German, and read as well after "als Teil
+  meines Plans," as a bare clause does, but `Scheme.Require.End` reads the end of the whole text: three
+  `finish_not_verb` and one `scheme_not_verb`.
+- **A whole name tied with a short one inside it.** A Japanese role held "Olfrid Battle-Born" exactly. In a script
+  written without spaces a name part is found as a run of characters, so "Bor" was found in "Battle-Born", and with the
+  surname too common to count, Bor and Olfrid tied: `role_ambiguous`, for a name copied letter for letter.
+- **The trial did not count `finish_not_verb` against the `Scheme` check** that refused it, so the "no check refuses a
+  quarter" criterion under-read it.
+
+The memories' people and places stay in English in every trial language, and are meant to: they come from the game,
+which this session runs in English. A game run in German or Russian hands the same templates its own names.
+
+Done.
+
+- **`<Check>.Trailing`** is a new `[Matching]` list: the words that may open a clause after a comma. The End lists read
+  only the text before the first comma such a word follows. It can only accept a clause whose own end passes, so a
+  sentence about somebody stays refused with a clause after it ("Hulda bestiehlt Lars, um reich zu werden", which
+  passed before). It reads nothing in a script written without spaces. German lists 17 words, each cited.
+- **A role holding a person's whole name names them**, before any part of it is weighed. The match is exact, so a name
+  in lowercase still names nobody, and it claims only the living who are not the mastermind; anyone else falls through
+  to the reasons given before.
+- **`PlotTrial::CheckOf` counts `finish_not_verb` under `Scheme`.**
+
+**Verification.**
+
+- **New tests:**
+  - **German trailing clauses.** Both of the trial's refused finishes pass the shipped `german.ini`. A command and a
+    sentence about somebody stay refused with a clause after them.
+  - **A whole name in an unspaced script.** "Jon Battle-Born" beside "Bor" and two more Battle-Borns resolves to Jon.
+    Without the change it is refused as ambiguous, as the trial was.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 31 — What the translation reviews found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The German, Russian and Japanese memories and model content from Step 30's last run read as a native speaker
+would write them, as far as the language files, the prompt forms and the code can make them.
+
+Each language's memories and model answers from the fourth trial run were reviewed against that language's
+translation guidance, with every Skyrim term checked against the game's own strings. English names for people and
+places were not counted: the session ran in English. The findings, by where they are fixed:
+
+- **Templates.**
+  - German: "selbst" placed straight after a name in the `*.self_dispatched` keys reads as that person's
+    ("Hemming Black-Briar selbst zu beobachten"). `went_on` stacks two *zu*-clauses, and `destroy.*` is a calque.
+  - Russian: "в окрестностях места {place}" reads as a form label in every `ask_around` and `spread_rumors` key.
+  - Japanese: grammatical 事 where the game writes こと (ことにした 50 times to 事にした 8), 習慣 for a target's routine,
+    and two templates naming the same person twice.
+- **Prompt forms.**
+  - No language had an `ambition` form, so the English "complete sentence with a pronoun subject" leaked: seven of
+    twelve Japanese ambitions opened with 彼は or 彼女は, and Russian's varied.
+  - "Never translate a name" was read as "leave English words in English": Japanese kept "Jarl", "Imperial" and
+    "arcanaeum".
+  - Russian's scheme is read after «мне удалось», so it must be perfective. "Perfective where natural" let "распускать
+    слухи" through.
+  - A Japanese scheme with its own という doubles the template's.
+  - German put articles before people's names ("den Silus Vesuius").
+- **Code.**
+  - Russian model text uses ё, which the `ru` font set cannot draw (see **Encoding**).
+  - German's `led` audience, "der eigenen Gefolgschaft", refers back to the speaker; it needs the leader's name.
+  - The audience was worded in the session's table, not the request's, so a trial run's was English.
+  - Made items take no article in German, French, Italian and Spanish ("Eisenschwert selbst zu schmieden"), ammunition
+    stays singular ("ein Bündel Eisenpfeil"), and Russian and Polish put the game's nominative into accusative slots.
+
+Wrong lore terms and names translated inside free text were left as model variance.
+
+Done, but for made items, which are Step 32's.
+
+- **Templates.** German's `*.self_dispatched` keys put "selbst" with the speaker ("Ich habe mich selbst auf den Weg
+  gemacht, um {mark} zu beobachten"), and `falsify` says "eigenhändig"; `went_on` takes the scheme as an apposition;
+  `destroy` says "im Besitz von"; a granted petition is "stattgegeben". Russian's 24 place keys say "в поселении
+  {place}", and every dispatched memory says "Это часть моего плана:". Japanese writes grammatical こと in kana (38
+  places, the file's header saying so), 日々の行動 for a routine, and names nobody twice.
+- **Prompt forms.** Every language file has an `ambition` form in its own shape: a pronoun subject in German, French,
+  Russian and Chinese, none in Italian, Spanish and Polish, which leave it out, and none in Japanese, in plain style.
+  Russian's scheme and finish must be perfective and never use ё. Japanese's quote with と, never という. German's put
+  no article before a name.
+- **The output-language line** says a title, a rank or a common noun is translated like any other word; only names
+  keep their spelling.
+- **The sanitizer** writes ё and Ё as е and Е; `docs/LLM_RESPONSE_HANDLING.md` and CLAUDE.md say so.
+- **`[Plot.Audience]`** passes `{mark}`, the leader. German's `led` is "den Gefolgsleuten von {mark}": it repeats the
+  name in a denunciation and names the leader in their own memory, both clumsy, but the audience is one text shared by
+  every point of view, and the reflexive it replaces pointed at the speaker. The audience is worded in the request's
+  table, so a trial's is in its language.
+
+**Verification.**
+
+- **New tests:** the sanitizer writes "неё Ёлка" as "нее Елка", and every language asking a form of the scheme asks
+  one of the ambition.
+- The shipped-files test loads every edited language with no key refused.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 32 — Made-item grammar
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** a made thing reads as its language writes it wherever `{item}` stands: with its article, in the plural for
+ammunition, and in the case its slot needs.
+
+**Design, for review.** A made thing reaches `{item}` as the game names it, bare and in the
+nominative ("Eisenschwert", "Épée en acier", "Стальная булава"). The pool's items do not have this problem: their
+`[Data.Item]` rows are written in the form their slots need. Made things cannot be: there are hundreds, read from the
+game. Three things are missing, and which a language needs differs:
+
+| Language                  | Article by gender | Plural for ammunition | Case of the name |
+| ------------------------- | ----------------- | --------------------- | ---------------- |
+| German                    | yes (accusative)  | yes                   | no               |
+| French, Italian, Spanish  | yes               | yes                   | no               |
+| Russian, Polish           | no                | no (a carrier noun)   | accusative       |
+| English, Japanese, Chinese| as now            | as now                | no               |
+
+Rules in the language's `[Grammar]`, read by a new pure `ItemGrammar` and, through it, by `PlotText::ItemPhrase`
+alone. An entry is a word (`hacha`) or an ending (`*axt`), compared without case; the longest match wins, and a whole
+word beats any ending. Checked against the 4,818 things the game lets a craftsman make, a first proposal keyed on a
+fixed head position failed: a genitive after the head ("Яд нетча", "Dekokt otwierania") ends like a word to decline,
+and an adjective before it shifts the head.
+
+- **`Item.Gender.<class>`** lists the words, or endings, that decide which article a name takes. The first word of
+  the name any list knows decides, and its class reaches the `made` template as `{gender}`: German `made = {gender,
+  select, masculine {einen {name}} feminine {eine {name}} neuter {ein {name}} other {{name}}}`. A class is whatever
+  the article needs: Italian has `masculine_s` for "uno" and `feminine_vowel` for "un'", Spanish puts `hacha` with
+  the masculine for "un". A language with lists that knows no word of a name leaves it as it is, as `other`.
+- **`Item.Case.Modifier`** and **`Item.Case.Head`** rewrite a made thing's name into the case its slots need, from
+  its first word: a word a modifier rule matches is rewritten and the next one read, a word a head rule matches is
+  rewritten and reading stops, and a word neither matches stops it. Russian `*ая > *ую` before `*а > *у` turns
+  "Стальная булава летаргии" into "Стальную булаву летаргии"; the masculine and neuter need nothing, and their first
+  word stops it. German `*ischer > *ischen` gives "einen Daedrischen Bogen".
+- **`Item.Plural`** rewrites every word of ammunition's name: German `*pfeil > *pfeile`, French `carreau >
+  carreaux, *if > *ifs`.
+
+The alternative, a carrier noun per language ("изделие — {name}", "ein Stück: {name}"), is data only but reads as
+stilted in every language that needs it.
+
+Done.
+
+- **`ItemGrammar`** reads the rules and fits a name; `LanguageTable` loads them from `[Grammar]`, each list from the
+  first of overlay, shipped file and English that has it, and refuses an entry that is not a word, an ending or a
+  rewrite with a `*` on both sides or neither.
+- **`PlotText::ItemPhrase`** fits the name before `made` or `ammo` renders it, and passes `{gender}` to `made`.
+- **Rules** in German, Russian, Polish, French, Italian and Spanish, with `made` templates choosing the article by
+  class. English, Japanese and Chinese need none. French, Italian and Spanish `Item.Articles` gain their plural
+  articles and Italian's "un'".
+- **`Item.Articles` ending in an apostrophe** is set aside with no space after it, so "un'Ascia d'ebano" is named by a
+  text saying "l'ascia d'ebano".
+
+Every name was checked by a throwaway script reading the rules as the files ship them. Of 4,818 names per language,
+the article is left out of German's 12, French's 5, Italian's 10 and Spanish's 13, all of them proper names such as
+"Kordirs Skooma" and "Stros M'Kais Rum", which read right bare. Two are known wrong: German "Esberns Zaubertrank" takes
+"einen", and Polish "Woda święcona" keeps its adjective after the noun in the nominative.
+
+**Verification.**
+
+- **New tests:**
+  - **`ItemGrammar`:** parsing, the first known word deciding past an adjective, an unknown name left whole, the case
+    rules stopping at a genitive, a whole word beating an ending, punctuation and capitals kept, and ammunition
+    rewritten word by word.
+  - **The shipped files,** through `PlotText::ItemPhrase`, one game name per rule in each of the six languages.
+    Examples: "einen Daedrischen Bogen der Angst", "Стеклянную булаву летаргии", "Słabą truciznę", "un lot de
+    Carreaux d'acier explosifs de glace", "un'Ascia d'ebano" and "un Hacha de combate de cristal".
+  - **An article ending in an apostrophe** is set aside when a role names the thing.
+- Every language still loads with no key refused.
+
+`pwsh -File build.ps1 test`: 600 of 600 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 33 — What the second translation reviews found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Close what a fresh review of the fifth trial run found, after Step 31's changes went live.
+
+That run accepted English 7 of 8, German 8, Russian 7 and Japanese 8. The reviews found Step 31's template and
+form changes working: no template error, every ambition in its language's form, Russian schemes perfective and
+without ё, no doubled という. What they found instead:
+
+- **Names, made worse in two places by Step 31's lines.** The permission to add "the ending grammar requires" reached
+  `roles`, which are matched as written: Russian roles came back declined ("Ульфрика Буревестника"). "Titles are
+  translated" reached epithets ("Elisif die Fair"). Japanese wrote one person two ways in one answer.
+- **The forms' examples are copied, not followed.** German's finish example put the object before a bare-name dative,
+  and the model did the same, which no reader can parse when both are names. Every Japanese ambition ended in the
+  example's 目論んでいる, and its リフト taught the model to transliterate a place.
+- **Templates.** German's `ask_around` says "rund um" a settlement, which is its countryside. Japanese's
+  `denounce.agent_failed` and `denounce.mastermind_told_succeeded` still name the authority twice, and
+  `bribe`'s and `silence`'s `mastermind_told_succeeded` read "口をつぐむと報告があった", a possible conditional.
+- **Japanese particles.** 警告する took を, and the new "quote with と" reached 見せる.
+- **Mixed scripts.** A Russian answer wrote "Солitude", a word half Cyrillic and half Latin, which nothing caught.
+
+Done.
+
+- **Names.** The output-language line allows a name its grammatical ending only inside the content fields, says an
+  epithet ("the Fair") is part of the name, and adds a rank and a school of magic to what is translated. The ambition
+  prompt says a role is never declined into another case.
+- **Forms.**
+  - German's finish puts whoever receives or loses something before the thing, as its example now does ("dem Jarl den
+    Brief vorzulegen").
+  - Japanese's ambition offers four endings and names nobody.
+  - Japanese's scheme and finish allow と only before a verb of saying or claiming, show 警告する with に, and write a
+    jarl as 首長 after the name.
+- **Templates.**
+  - German's 21 `ask_around` and `spread_rumors` keys say "in {place}", and the unfilled place is "irgendeinem Ort", the
+    dative "in" now takes.
+  - Japanese's two `denounce` keys no longer name the authority twice, and `bribe`'s and `silence`'s reports say
+    "…ことを承知した".
+  - Japanese's 私の事 in the `threaten` lines stays in kanji: it means "my affairs", which the file's kana rule exempts.
+- **`mixed_script`** is a new rejection, numbered last so no code moves. `TextUtf8::MixedScriptWord` finds a word whose
+  letters are part Latin and part Cyrillic, every content field is refused for one, and the retry is told the word. A
+  Latin name run into Japanese is not counted.
+
+**Verification.**
+
+- **New tests:** "Солitude" is found and named; Cyrillic and Latin words side by side, a Latin name run into Japanese
+  and accented Latin are not; an ambition answer with the word is refused as `mixed_script` with its key and word.
+- Every example in every form still passes its language's `Scheme` check, and every language loads with no key
+  refused.
+
+`pwsh -File build.ps1 test`: 598 of 598 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 34 — Names keep their alphabet
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A name the prompt writes in one alphabet comes back in that alphabet, in the content fields as in the roles,
+and a role refused for being written in another is told so.
+
+The sixth trial run accepted 7 of 8 in every language, but Russian and Japanese wrote the session's names in their own
+alphabet inside the scheme and finish: "Тонгвору Серебряному Кровью", "Мейвен Black-Briar", "ファリオン". A memory
+then names one person two ways ("ファリオンの…自らMorthalでFalionの…"). Russian twice wrote a role that way ("Рольф",
+"Кьяр" for Kjar), and the retry, told to copy the name exactly, did it again. Step 33's permission for a name to take
+"the ending grammar requires" is the likely cause: a Latin name can take a Russian ending only once it is written in
+Cyrillic. A Russian or Japanese game hands the model Latin names the same way, for every NPC a mod did not translate.
+
+- **The output-language line** allows a name its grammatical ending only when the prompt writes it in the content
+  language's own alphabet. A name in another alphabet is copied letter for letter everywhere, the content fields
+  included.
+- **`role_names_nobody`** carries `alphabet` when the role's text shares no alphabet with any name the role could
+  hold, and the retry is told the name is written in another alphabet than all of them and to copy one letter for
+  letter. A text sharing one, such as "Markarthの宮廷", is refused as before.
+
+Done.
+
+- **`TextUtf8::Scripts`** says which alphabets a text's letters are in: Latin, Greek, Cyrillic, kana, Han, Hangul or
+  another. `MixedScriptWord` now reads it.
+- **The output-language line** and **`role_names_nobody`'s `alphabet`** are as above. The retry reads "'Кьяр' is
+  written in another alphabet than every name that can be the mark (…); it could be, among others, Kjar, …; copy one
+  of those names letter for letter, in the letters this prompt writes it in, never transliterated".
+
+A name the game gives in the content language's own letters, in a Russian or Japanese game, still takes its ending as
+before. Only one written in other letters is held to them.
+
+**Verification.**
+
+- **New tests:** `Scripts` tells Latin, accented Latin, Cyrillic and kana apart, gives "Markarthの宮廷" all three of
+  its alphabets and digits none; a role written "Кьяр" among Latin names is refused with `alphabet`, and one in Latin
+  letters without it.
+- Whether the model keeps Latin names in Latin letters is for the next language trial to show.
+
+`pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 35 — German indirect speech and denunciations
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A German finish that reports a rumor in indirect speech passes the `Scheme` check, and a German finish never
+puts two bare names side by side.
+
+The seventh trial run accepted English 8 of 8, German 6, Russian 5 and Japanese 8. Japanese now keeps Latin names in
+Latin letters; Russian does in about half its answers. German lost a birth and misread three others:
+
+- **Indirect speech refused.** "in Markarth das Gerücht zu streuen, Raerek diene heimlich den Thalmor" is good German,
+  but the clause after the comma opens with a name, which no `Scheme.Trailing` entry can list. The same answer came
+  back three times.
+- **Step 33's order over-applied.** "Put whoever receives or loses something before the thing" reached denunciations,
+  which take "bei": "Laila Law-Giver Erikur zu denunzieren", "Maven Maul als Verräter … zu denunzieren".
+
+- **`<Check>.Require.End`**, when no trailing entry cuts the text and the whole of it fails, also reads the text before
+  its first comma. A clause a trailing entry opens still cuts the text first, so "Hulda bestiehlt Lars, um reich zu
+  werden" stays refused; a sentence with a subject is refused by `Reject.Start`, which this does not touch.
+- **German's finish form** keeps the receiver first only for a verb that gives, shows or takes something, gives a
+  denunciation its "bei" ("Erikur bei Laila Law-Giver anzuschwärzen"), and says never to put two names side by side.
+
+Done, as above. The finish form keeps its examples quoted and nothing else, since the shipped-forms test reads every
+quoted text after an "e.g." as one.
+
+**Verification.**
+
+- **New test:** the trial's "in Markarth das Gerücht zu streuen, Raerek diene heimlich den Thalmor" passes German's
+  `Scheme` check, and a bare infinitive before the comma ("Raerek den Thalmor dienen, sagt man in Markarth") is still
+  refused. The trailing-clause cases from Step 30c pass unchanged, and so does the finish form's new example.
+- Whether German stops setting two names side by side is for the next language trial to show.
+
+`pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 36 — A Russian adverb before the infinitive
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A Russian scheme or finish that opens with an adverb before its infinitive passes the `Scheme` check.
+
+The eighth trial run, with the game itself in German, refused a Russian birth three times for "окончательно опозорить
+Рерика Орейуса перед ярлом Игмундом". It is a subjectless infinitive clause and reads well after "Это часть моего
+плана:", but `Scheme.Require.Start` asks for the infinitive as the first word. The game's own dialogue opens a plan
+the same way: "Тайно убить тройняшек, а затем переложить вину на мать."
+
+- **`Scheme.Require.Start`** in `russian.ini` gains `*о *ть`, `*о *ться`, `*о *ти` and `*о *чь`: a word in -о, the
+  ending of most adverbs ("тайно", "окончательно", "публично"), then the infinitive. A subject still cannot open the
+  text: a pronoun or a name in -о before an infinitive is not Russian a model writes.
+- The forms still ask for the verb first; only the check stops refusing an adverb ahead of it.
+
+Done, as above, citing the game's "Тайно убить тройняшек" for the new entries.
+
+**Verification.**
+
+- **New test:** the trial's "окончательно опозорить Рерика Орейуса перед ярлом Игмундом" and the game's "Тайно убить
+  тройняшек" pass Russian's `Scheme` check; "тайно Ульфрик убил ярла", an adverb before a sentence about somebody, is
+  still refused. Without the new entries the first two fail.
+
+`pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.

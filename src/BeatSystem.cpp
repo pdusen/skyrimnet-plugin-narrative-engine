@@ -14,9 +14,11 @@
 #include <EventLogUtil.h>
 #include <LetterComposer.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <PhaseTracker.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -796,7 +798,6 @@ namespace NarrativeEngine::BeatSystem
                     continue;
                 nlohmann::json cj = {
                     {"name", b->Name()},
-                    {"description", b->Description()},
                     {"letter_sender_candidates",
                      (b->Name() == "npc_letter") ? serializedLetterCandidates : nlohmann::json::array()},
                     {"visit_sender_candidates",
@@ -807,6 +808,7 @@ namespace NarrativeEngine::BeatSystem
                 candArr.push_back(std::move(cj));
             }
             ctx["candidates"] = std::move(candArr);
+            PromptLanguage::Add(ctx, {"narrative_note", "narration_prose"}, Localization::Get());
 
             ctx["player_context"] = {
                 {"player_name", playerName},
@@ -836,7 +838,7 @@ namespace NarrativeEngine::BeatSystem
                     // drops them — beat selection reasons about what the
                     // world is doing, not about a book's contents, and a
                     // single illustrated book outweighs the whole timeline.
-                    SkyrimNetEvents::FormatEventsText(
+                    SkyrimNetEvents::DescribeEvents(
                         filtered, snapshot.player.gameTimeSeconds, SkyrimNetEvents::BookTextPolicy::Omit, playerName);
                     skyrimSide = std::move(filtered);
                 }
@@ -876,15 +878,18 @@ namespace NarrativeEngine::BeatSystem
         // from any thread; ApplyDecision is plugin-thread.
         void FinalizeWithFailure(const PluginThread::Token& pt,
                                  DecisionLog::DecisionRecord rec,
-                                 const std::string& reason,
+                                 DecisionLog::DecisionRecord::Failure failure,
+                                 std::string detail,
                                  FinalizedCallback onFinalized)
         {
-            rec.beatSelected = "(failed: " + reason + ")";
+            rec.beatSelected.clear();
+            rec.failure = failure;
+            rec.failureDetail = std::move(detail);
             {
                 std::scoped_lock lock(g_stateMutex);
                 g_globalCooldownMs = 0;
             }
-            logger::warn("BeatSystem: beat-select failed: {}", reason);
+            logger::warn("BeatSystem: beat-select failed: {}", DecisionLog::ActionText(rec, Localization::English()));
             EvaluationPipeline::ApplyDecision(pt, rec);
             if (onFinalized)
                 onFinalized();
@@ -920,7 +925,8 @@ namespace NarrativeEngine::BeatSystem
             if (!beat) {
                 FinalizeWithFailure(pt,
                                     std::move(rec),
-                                    "LLM-chosen beat '" + chosenBeat + "' missing from registry",
+                                    DecisionLog::DecisionRecord::Failure::BeatMissing,
+                                    chosenBeat,
                                     std::move(onFinalized));
                 return;
             }
@@ -1123,8 +1129,11 @@ namespace NarrativeEngine::BeatSystem
 
                 if (!result.ok) {
                     logger::warn("BeatSystem: {}beat-select LLM call failed: {}", logPrefix, result.response);
-                    FinalizeWithFailure(
-                        pt, std::move(rec), std::string("LLM error: ") + result.response, std::move(onFinalized));
+                    FinalizeWithFailure(pt,
+                                        std::move(rec),
+                                        DecisionLog::DecisionRecord::Failure::LlmError,
+                                        result.response,
+                                        std::move(onFinalized));
                     return;
                 }
 
@@ -1141,7 +1150,8 @@ namespace NarrativeEngine::BeatSystem
                 if (parsed.is_discarded() || !parsed.is_object()) {
                     FinalizeWithFailure(pt,
                                         std::move(rec),
-                                        std::string("LLM response was not a JSON object: ") + result.response,
+                                        DecisionLog::DecisionRecord::Failure::NotJson,
+                                        result.response,
                                         std::move(onFinalized));
                     return;
                 }
@@ -1170,11 +1180,11 @@ namespace NarrativeEngine::BeatSystem
                                      invalidReason);
                         continue;
                     }
-                    FinalizeWithFailure(
-                        pt,
-                        std::move(rec),
-                        "LLM picked an option it was not offered on every attempt (last: " + invalidReason + ")",
-                        std::move(onFinalized));
+                    FinalizeWithFailure(pt,
+                                        std::move(rec),
+                                        DecisionLog::DecisionRecord::Failure::NotOffered,
+                                        invalidReason,
+                                        std::move(onFinalized));
                     return;
                 }
 
@@ -1583,7 +1593,7 @@ namespace NarrativeEngine::BeatSystem
         rec.tensionScore = DecisionLog::LatestTensionScore().value_or(0);
         rec.currentPhase = currentPhase;
         rec.alphaCanonActiveSignals = 0;
-        rec.narrativeNote = "forced dispatch via debug UI";
+        rec.note = DecisionLog::DecisionRecord::Note::ForcedDispatch;
 
         const int tensionDelta = ComputeTensionDelta(currentPhase, rec.tensionScore);
 

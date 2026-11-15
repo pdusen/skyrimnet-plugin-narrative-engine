@@ -1,9 +1,14 @@
+#include <EventText.h>
 #include <SkyrimNetEvents.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <nlohmann/json.hpp>
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -34,6 +39,37 @@ namespace
     namespace Events = NarrativeEngine::SkyrimNetEvents;
     using Events::BookTextPolicy;
 
+    // The shipped english.ini, read against EventText's keys alone: the
+    // other sections' keys are rejected as unknown here, which matters to
+    // nobody, because only these are rendered.
+    const NarrativeEngine::LanguageTable::Table& English()
+    {
+        static const std::string text = [] {
+            std::ifstream in(std::filesystem::path{NARRATIVEENGINE_STATICS_DIR}
+                                 / "SKSE/Plugins/NarrativeEngine/Languages/english.ini",
+                             std::ios::binary);
+            return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        }();
+        static const auto table = NarrativeEngine::LanguageTable::Table::Build({text, std::nullopt, std::nullopt},
+                                                                               NarrativeEngine::EventText::Keys());
+        return table;
+    }
+
+    std::string Line(const json& event)
+    {
+        return NarrativeEngine::EventText::Line(English(), event);
+    }
+
+    std::string Ago(const json& age)
+    {
+        return NarrativeEngine::EventText::Ago(English(), age);
+    }
+
+    std::string Duration(const json& age)
+    {
+        return NarrativeEngine::EventText::Duration(English(), age);
+    }
+
     // The bucket boundaries the formatters step across, named rather than
     // spelled as literals so a case reads as "one second short of a minute"
     // instead of 59.
@@ -46,13 +82,13 @@ namespace
     // still positive. Zero would collide with the "no usable time" sentinel.
     constexpr double kNow = 100000.0;
 
-    // FormatEventsText works on an array in place, so every case would
+    // DescribeEvents works on an array in place, so every case would
     // otherwise repeat the same wrap-index-read dance. These do it once.
     json FormatOne(json event, double now, BookTextPolicy policy, std::string_view player)
     {
         json events = json::array();
         events.push_back(std::move(event));
-        Events::FormatEventsText(events, now, policy, player);
+        Events::DescribeEvents(events, now, policy, player);
         return events[0];
     }
 
@@ -61,21 +97,24 @@ namespace
         // The events built below carry no gameTime, so no relative-time prefix
         // appears in cases that are about the body of the line. The prefix has
         // its own test case, which supplies one deliberately.
-        return FormatOne(std::move(event), kNow, policy, "Maxxor").value("text", std::string{});
+        return Line(FormatOne(std::move(event), kNow, policy, "Maxxor"));
     }
 
-    // One internal combat hit, shaped as the combat event log emits them.
-    // localTime and gameTime are kept equal so a case can place an event on the
-    // timeline and control its age with one number.
+    // One internal combat hit, shaped as the combat event log emits them: an
+    // actor's blow, or, when `namedAttacker` is false, damage from an
+    // activator called `attacker`. localTime and gameTime are kept equal so a
+    // case can place an event on the timeline and control its age with one
+    // number.
     json Hit(double at, std::string attacker, std::string target, bool namedAttacker = true)
     {
         json j;
         j["ne_kind"] = "hit";
         j["localTime"] = at;
         j["gameTime"] = at;
-        j["originatingActorName"] = std::move(attacker);
-        j["targetActorName"] = std::move(target);
-        j["ne_actor_is_named"] = namedAttacker;
+        j["line"] = {{"kind", "hit"},
+                     {"actor", std::move(attacker)},
+                     {"target", std::move(target)},
+                     {"source", namedAttacker ? "actor" : "activator"}};
         return j;
     }
 
@@ -92,13 +131,13 @@ namespace
     const json kNoEvents = json::array();
 } // namespace
 
-TEST_CASE("SkyrimNetEvents::FormatRelativeGameTime", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::RelativeGameTime, read as an age", "[SkyrimNetEvents]")
 {
     SECTION("when the gap is under a minute")
     {
         SECTION("should say just now")
         {
-            REQUIRE(Events::FormatRelativeGameTime(kMinute - 1.0) == "just now");
+            REQUIRE(Ago(Events::RelativeGameTime(kMinute - 1.0)) == "just now");
         }
     }
 
@@ -109,7 +148,7 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameTime", "[SkyrimNetEvents]")
             // The bucket comparisons are all `<`, so the exact second a unit is
             // reached belongs to the larger unit. Pinned at every step below,
             // because an off-by-one here reads as plausible either way.
-            REQUIRE(Events::FormatRelativeGameTime(kMinute) == "1 minute ago");
+            REQUIRE(Ago(Events::RelativeGameTime(kMinute)) == "1 minute ago");
         }
     }
 
@@ -117,7 +156,7 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameTime", "[SkyrimNetEvents]")
     {
         SECTION("should pluralize minutes")
         {
-            REQUIRE(Events::FormatRelativeGameTime(5.0 * kMinute) == "5 minutes ago");
+            REQUIRE(Ago(Events::RelativeGameTime(5.0 * kMinute)) == "5 minutes ago");
         }
     }
 
@@ -125,12 +164,12 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameTime", "[SkyrimNetEvents]")
     {
         SECTION("should switch to hours")
         {
-            REQUIRE(Events::FormatRelativeGameTime(kHour) == "1 hour ago");
+            REQUIRE(Ago(Events::RelativeGameTime(kHour)) == "1 hour ago");
         }
 
         SECTION("should pluralize hours")
         {
-            REQUIRE(Events::FormatRelativeGameTime(3.0 * kHour) == "3 hours ago");
+            REQUIRE(Ago(Events::RelativeGameTime(3.0 * kHour)) == "3 hours ago");
         }
     }
 
@@ -138,12 +177,12 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameTime", "[SkyrimNetEvents]")
     {
         SECTION("should switch to days")
         {
-            REQUIRE(Events::FormatRelativeGameTime(kDay) == "1 day ago");
+            REQUIRE(Ago(Events::RelativeGameTime(kDay)) == "1 day ago");
         }
 
         SECTION("should pluralize days")
         {
-            REQUIRE(Events::FormatRelativeGameTime(3.0 * kDay) == "3 days ago");
+            REQUIRE(Ago(Events::RelativeGameTime(3.0 * kDay)) == "3 days ago");
         }
     }
 
@@ -151,17 +190,17 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameTime", "[SkyrimNetEvents]")
     {
         SECTION("should switch to weeks")
         {
-            REQUIRE(Events::FormatRelativeGameTime(kWeek) == "1 week ago");
+            REQUIRE(Ago(Events::RelativeGameTime(kWeek)) == "1 week ago");
         }
 
         SECTION("should pluralize weeks")
         {
-            REQUIRE(Events::FormatRelativeGameTime(3.0 * kWeek) == "3 weeks ago");
+            REQUIRE(Ago(Events::RelativeGameTime(3.0 * kWeek)) == "3 weeks ago");
         }
     }
 }
 
-TEST_CASE("SkyrimNetEvents::FormatRelativeGameDuration", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::RelativeGameTime, read as a duration", "[SkyrimNetEvents]")
 {
     SECTION("when the duration is under a minute")
     {
@@ -169,7 +208,7 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameDuration", "[SkyrimNetEvents]")
         {
             // Not "just now": this variant is substituted into "for X" phrasing,
             // and "for just now" is not English.
-            REQUIRE(Events::FormatRelativeGameDuration(kMinute - 1.0) == "less than a minute");
+            REQUIRE(Duration(Events::RelativeGameTime(kMinute - 1.0)) == "less than a minute");
         }
     }
 
@@ -177,7 +216,7 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameDuration", "[SkyrimNetEvents]")
     {
         SECTION("should say one minute with no ago")
         {
-            REQUIRE(Events::FormatRelativeGameDuration(kMinute) == "1 minute");
+            REQUIRE(Duration(Events::RelativeGameTime(kMinute)) == "1 minute");
         }
     }
 
@@ -185,7 +224,7 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameDuration", "[SkyrimNetEvents]")
     {
         SECTION("should pluralize minutes")
         {
-            REQUIRE(Events::FormatRelativeGameDuration(5.0 * kMinute) == "5 minutes");
+            REQUIRE(Duration(Events::RelativeGameTime(5.0 * kMinute)) == "5 minutes");
         }
     }
 
@@ -193,17 +232,17 @@ TEST_CASE("SkyrimNetEvents::FormatRelativeGameDuration", "[SkyrimNetEvents]")
     {
         SECTION("should switch to hours")
         {
-            REQUIRE(Events::FormatRelativeGameDuration(2.0 * kHour) == "2 hours");
+            REQUIRE(Duration(Events::RelativeGameTime(2.0 * kHour)) == "2 hours");
         }
 
         SECTION("should switch to days")
         {
-            REQUIRE(Events::FormatRelativeGameDuration(kDay) == "1 day");
+            REQUIRE(Duration(Events::RelativeGameTime(kDay)) == "1 day");
         }
 
         SECTION("should switch to weeks")
         {
-            REQUIRE(Events::FormatRelativeGameDuration(kWeek) == "1 week");
+            REQUIRE(Duration(Events::RelativeGameTime(kWeek)) == "1 week");
         }
     }
 }
@@ -287,7 +326,7 @@ TEST_CASE("SkyrimNetEvents::MemoryAgeGameSeconds", "[SkyrimNetEvents]")
     }
 }
 
-TEST_CASE("SkyrimNetEvents::FormatEventsText renders known event types", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::DescribeEvents renders known event types", "[SkyrimNetEvents]")
 {
     SECTION("when the event is dialogue with a listener")
     {
@@ -381,7 +420,7 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText renders known event types", "[Skyri
     }
 }
 
-TEST_CASE("SkyrimNetEvents::FormatEventsText handles book_read", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::DescribeEvents handles book_read", "[SkyrimNetEvents]")
 {
     // Happy path: a book event carrying every name field and a short body of
     // markup. Cases about title precedence erase the fields they are not
@@ -441,7 +480,7 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText handles book_read", "[SkyrimNetEven
         SECTION("should call the reader the player")
         {
             const json out = FormatOne(event, kNow, BookTextPolicy::Omit, "");
-            REQUIRE(out.value("text", std::string{}) == "The player read \"The Lusty Argonian Maid\"");
+            REQUIRE(Line(out) == "The player read \"The Lusty Argonian Maid\"");
         }
     }
 
@@ -460,7 +499,7 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText handles book_read", "[SkyrimNetEven
 
         SECTION("should leave the body out of the rendered line")
         {
-            REQUIRE(out.value("text", std::string{}) == "Maxxor read \"The Lusty Argonian Maid\"");
+            REQUIRE(Line(out) == "Maxxor read \"The Lusty Argonian Maid\"");
         }
     }
 
@@ -475,8 +514,7 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText handles book_read", "[SkyrimNetEven
 
         SECTION("should append the body to the rendered line")
         {
-            REQUIRE(out.value("text", std::string{})
-                    == "Maxxor read \"The Lusty Argonian Maid\":\nChapter One\nLifts-Her-Tail");
+            REQUIRE(Line(out) == "Maxxor read \"The Lusty Argonian Maid\":\nChapter One\nLifts-Her-Tail");
         }
     }
 
@@ -499,7 +537,7 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText handles book_read", "[SkyrimNetEven
     }
 }
 
-TEST_CASE("SkyrimNetEvents::FormatEventsText survives malformed event data", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::DescribeEvents survives malformed event data", "[SkyrimNetEvents]")
 {
     // Happy path: an ordinary dialogue event. Each case below corrupts exactly
     // one field, the way a SkyrimNet payload or a third-party plugin does.
@@ -550,25 +588,25 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText survives malformed event data", "[S
         events.push_back(std::move(broken));
         events.push_back(
             json::object({{"type", "death"}, {"data", json::object({{"killer", "Hans"}, {"victim", "Luke"}})}}));
-        Events::FormatEventsText(events, kNow, BookTextPolicy::Omit, "Maxxor");
+        Events::DescribeEvents(events, kNow, BookTextPolicy::Omit, "Maxxor");
 
         SECTION("should render every other event in the batch")
         {
             // The failure this guards: the throw used to escape mid-loop, so
             // events before the bad one kept their text, events after got none,
             // and the caller got an exception instead of a timeline.
-            REQUIRE(events[0].at("text") == "Ysolda -> Carlotta: \"Good morning.\"");
-            REQUIRE(events[2].at("text") == "Hans killed Luke");
+            REQUIRE(Line(events[0]) == "Ysolda -> Carlotta: \"Good morning.\"");
+            REQUIRE(Line(events[2]) == "Hans killed Luke");
         }
 
         SECTION("should render the malformed one with the field left empty")
         {
-            REQUIRE(events[1].at("text") == "Ysolda -> Carlotta: \"\"");
+            REQUIRE(Line(events[1]) == "Ysolda -> Carlotta: \"\"");
         }
     }
 }
 
-TEST_CASE("SkyrimNetEvents::FormatEventsText falls back for unknown types", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::DescribeEvents falls back for unknown types", "[SkyrimNetEvents]")
 {
     SECTION("when the payload is already a rendered sentence")
     {
@@ -631,7 +669,7 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText falls back for unknown types", "[Sk
     }
 }
 
-TEST_CASE("SkyrimNetEvents::FormatEventsText prefixes the relative time", "[SkyrimNetEvents]")
+TEST_CASE("SkyrimNetEvents::DescribeEvents prefixes the relative time", "[SkyrimNetEvents]")
 {
     json event =
         json::object({{"type", "persistent_generic"}, {"data", json::object({{"line", "The bridge is out."}})}});
@@ -802,7 +840,7 @@ TEST_CASE("SkyrimNetEvents::BuildMergedTimeline condenses combat hits", "[Skyrim
     const auto summaryText = [&]() -> std::string {
         const json out = Events::BuildMergedTimeline(kNoEvents, combat, kNoEvents, kNoEvents, kNow);
         REQUIRE_FALSE(out.empty());
-        return out[0].value("text", std::string{});
+        return Line(out[0]);
     };
 
     SECTION("when two named actors trade a single blow")
@@ -955,7 +993,7 @@ TEST_CASE("SkyrimNetEvents::BuildMergedTimeline appends an idle marker", "[Skyri
             const json out = Events::BuildMergedTimeline(skyrimNet, kNoEvents, kNoEvents, kNoEvents, kNow);
             REQUIRE(out.size() == 1);
             REQUIRE(out[0].at("ne_kind") == "idle_marker");
-            REQUIRE(out[0].at("text") == "Nothing notable has happened for over an hour");
+            REQUIRE(Line(out[0]) == "Nothing notable has happened for over an hour");
         }
     }
 
@@ -967,7 +1005,7 @@ TEST_CASE("SkyrimNetEvents::BuildMergedTimeline appends an idle marker", "[Skyri
         {
             const json out = Events::BuildMergedTimeline(skyrimNet, kNoEvents, kNoEvents, kNoEvents, kNow);
             REQUIRE(out.size() == 2);
-            REQUIRE(out[1].at("text") == "Nothing notable has happened for 11 minutes");
+            REQUIRE(Line(out[1]) == "Nothing notable has happened for 11 minutes");
         }
     }
 

@@ -2,6 +2,7 @@
 
 #include <EngineMock.h>
 #include <PlotPopulation.h>
+#include <ShippedLanguage.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -177,7 +178,8 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
 
         SECTION("should say on each line why the person is there")
         {
-            REQUIRE(list.front().line == "Idolaf (someone they know)");
+            REQUIRE(list.front().value.text == "Idolaf");
+            REQUIRE(list.front().why.relation == "close");
         }
     }
 
@@ -203,7 +205,9 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
 
         SECTION("should place a stranger by where they live")
         {
-            REQUIRE(list.back().line == "Brand-Shei (lives in Riften)");
+            REQUIRE(list.back().value.text == "Brand-Shei");
+            REQUIRE(list.back().why.relation.empty());
+            REQUIRE(list.back().why.lives == "Riften");
         }
     }
 
@@ -354,8 +358,12 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
 
         SECTION("should put it on the line, and leave it off for nobody else")
         {
-            REQUIRE(list.front().line == "Hulda, runs the Bannered Mare (lives in the same hold)");
-            REQUIRE(list.back().line == "Brand-Shei (lives in Riften)");
+            REQUIRE(list.front().value.text == "Hulda");
+            REQUIRE(list.front().why.occupation == "runs the Bannered Mare");
+            REQUIRE(list.front().why.relation == "neighbour");
+            REQUIRE(list.back().value.text == "Brand-Shei");
+            REQUIRE(list.back().why.relation.empty());
+            REQUIRE(list.back().why.lives == "Riften");
         }
     }
 
@@ -368,7 +376,9 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         SECTION("should admit them to a slot about whom the mastermind knows, first, saying why")
         {
             REQUIRE(list.front().value.form == kStranger);
-            REQUIRE(list.front().line == "Brand-Shei (lives in Riften; named in the scheme)");
+            REQUIRE(list.front().value.text == "Brand-Shei");
+            REQUIRE(list.front().why.lives == "Riften");
+            REQUIRE(list.front().why.named);
             REQUIRE(list.size() == 5);
         }
     }
@@ -510,7 +520,7 @@ TEST_CASE("PlotCandidates things and bindings", "[PlotCandidates][engine]")
         SECTION("should offer the pool in its own order, as it is said aloud")
         {
             REQUIRE(Forms(list) == std::vector<RE::FormID>{0x0000D001, 0x0000D002});
-            REQUIRE(list.front().line == "a ruby");
+            REQUIRE(list.front().value.text == "a ruby");
         }
 
         SECTION("should be asked")
@@ -731,7 +741,7 @@ TEST_CASE("PlotCandidates craft rules", "[PlotCandidates][engine]")
         SECTION("should list what the friend is skilled enough to make, and nothing beyond it")
         {
             REQUIRE(Forms(list) == std::vector<RE::FormID>{kDagger, kSword});
-            REQUIRE(list[1].line == "a Steel Sword");
+            REQUIRE(list[1].value.text == "a Steel Sword");
         }
 
         SECTION("should list nothing of another craft")
@@ -823,11 +833,22 @@ TEST_CASE("PlotCandidates craft rules", "[PlotCandidates][engine]")
 
 TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
 {
+    // A refused role comes back as a code and its arguments, which
+    // plot_rejection.prompt words for the retry; these cases check what each
+    // says, and the render comparison checks how it reads.
     Fixture f;
     const auto resolve = [&f](std::string_view verb, std::vector<PlotModel::SlotValue> named) {
         const auto* goal = PlotVerbs::Find(verb);
         REQUIRE(goal != nullptr);
         return PlotCandidates::ResolveRoles(*goal, named, f.Request());
+    };
+    // The one problem a resolution has, as the retry reads it.
+    const auto only = [](const PlotCandidates::Resolution& out) {
+        REQUIRE(out.problems.size() == 1);
+        return out.problems.front().ToJson();
+    };
+    const auto role = [](std::string_view verb, std::string_view slot) {
+        return nlohmann::json{{"verb", verb}, {"name", slot}};
     };
 
     SECTION("when every role names somebody or something the plot can reach")
@@ -836,7 +857,7 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
 
         SECTION("should resolve each, in slot order, as it is said")
         {
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values.size() == 2);
             REQUIRE(out.values[0].form == 0x0000D001);
             REQUIRE(out.values[0].text == "a ruby");
@@ -850,7 +871,10 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
 
         SECTION("should refuse them, naming the role, though naming them made them known to a list")
         {
-            REQUIRE(out.problem.find("Brand-Shei cannot be the mark (whom it is stolen from)") != std::string::npos);
+            const auto p = only(out);
+            REQUIRE(p["code"] == "role_not_admitted");
+            REQUIRE(p["who"] == "Brand-Shei");
+            REQUIRE(p["role"] == role("steal", "mark"));
         }
     }
 
@@ -864,13 +888,15 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         SECTION("should refuse an invented name as nobody, not as any of them")
         {
             const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Captain Veiled Lotus"}});
-            REQUIRE(out.problem.find("'Captain Veiled Lotus' names nobody in Skyrim") != std::string::npos);
+            const auto p = only(out);
+            REQUIRE(p["code"] == "role_names_nobody");
+            REQUIRE(p["text"] == "Captain Veiled Lotus");
         }
 
         SECTION("should still resolve a real one")
         {
             const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Captain Aldis"}});
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values[1].form == 0x00010302);
         }
     }
@@ -880,8 +906,9 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         SECTION("should list everybody the rule admits when there are few")
         {
             const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}});
-            REQUIRE(out.problem.find("; it can be ") != std::string::npos);
-            REQUIRE(out.problem.find("Idolaf") != std::string::npos);
+            const auto admitted = only(out)["admitted"];
+            REQUIRE(admitted["more"] == false);
+            REQUIRE(std::ranges::count(admitted["names"], nlohmann::json("Idolaf")) == 1);
         }
 
         SECTION("should list the closest eight when there are more")
@@ -891,58 +918,73 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
                     Person(npc, "Townsfolk " + std::to_string(npc), kWhiterunHold, kWhiterun));
             }
             const auto out = resolve("denounce", {{"mark", 0, "Ghost of Somebody"}, {"authority", 0, "Laila"}});
-            const auto at = out.problem.find("; it could be, among others, ");
-            REQUIRE(at != std::string::npos);
-            // Eight names: six commas between them, then "or" before the last.
-            const auto offered = out.problem.substr(at + std::string_view{"; it could be, among others, "}.size());
-            REQUIRE(std::count(offered.begin(), offered.end(), ',') == 6);
-            REQUIRE(offered.find(" or ") != std::string::npos);
+            const auto admitted = only(out)["admitted"];
+            REQUIRE(admitted["more"] == true);
+            REQUIRE(admitted["names"].size() == 8);
         }
     }
 
     SECTION("when a role names nobody living")
     {
-        f.population.absent = {{"Mogrul", "no home location"}, {"Hulda", "a ghost"}};
+        f.population.absent = {{"Mogrul", "no_location"}, {"Hulda", "ghost"}};
 
         SECTION("should say when they are dead or not in the world")
         {
-            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Ghost of Somebody"}})
-                        .problem.find("Ghost of Somebody is dead or not in the world, for the mark")
-                    != std::string::npos);
+            const auto p = only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Ghost of Somebody"}}));
+            REQUIRE(p["code"] == "role_dead");
+            REQUIRE(p["who"] == "Ghost of Somebody");
+            REQUIRE(p["role"] == role("steal", "mark"));
         }
 
         SECTION("should say when the plots leave them out, and why")
         {
-            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}})
-                        .problem.find("Mogrul cannot take part in these plots (no home location), for the mark")
-                    != std::string::npos);
+            const auto p = only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}}));
+            REQUIRE(p["code"] == "role_left_out");
+            REQUIRE(p["who"] == "Mogrul");
+            REQUIRE(p["why"] == "no_location");
         }
 
         SECTION("should say when nobody in Skyrim has the name")
         {
-            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Vigilia Rulcanella"}})
-                        .problem.find("'Jarl Vigilia Rulcanella' names nobody in Skyrim, for the mark")
-                    != std::string::npos);
+            const auto p = only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Vigilia Rulcanella"}}));
+            REQUIRE(p["code"] == "role_names_nobody");
+            REQUIRE(p["text"] == "Jarl Vigilia Rulcanella");
+        }
+
+        SECTION("should say when the name is written in another alphabet than any it could be")
+        {
+            // "Кьяр": Kjar, transliterated by a Russian trial answer.
+            const auto p =
+                only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "\xD0\x9A\xD1\x8C\xD1\x8F\xD1\x80"}}));
+            REQUIRE(p["code"] == "role_names_nobody");
+            REQUIRE(p["alphabet"] == true);
+        }
+
+        SECTION("should not say so of a name in the same alphabet")
+        {
+            const auto p = only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Vigilia Rulcanella"}}));
+            REQUIRE_FALSE(p.contains("alphabet"));
         }
 
         SECTION("should say a role takes one person's name when the words are a group's")
         {
-            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "the East Empire Company"}})
-                        .problem.find("; a person's role takes one person's name, never a group's or a place's")
-                    != std::string::npos);
+            // The wording of role_names_nobody says so.
+            const auto p = only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "the East Empire Company"}}));
+            REQUIRE(p["code"] == "role_names_nobody");
         }
 
         SECTION("should say when the role names the mastermind")
         {
-            REQUIRE(resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Olfrid"}})
-                        .problem.find("Olfrid is the one scheming and cannot be in their own scheme, for the authority")
-                    != std::string::npos);
+            const auto p = only(resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Olfrid"}}));
+            REQUIRE(p["code"] == "role_is_mastermind");
+            REQUIRE(p["who"] == "Olfrid");
+            REQUIRE(p["role"] == role("denounce", "authority"));
         }
 
         SECTION("should still find the living person when a left-out record shares their name")
         {
             const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Hulda"}});
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values[1].form == kNeighbour);
         }
     }
@@ -957,13 +999,15 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         SECTION("should ask for the whole name when only the shared word is given")
         {
             const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Idgrod"}});
-            REQUIRE(out.problem.find("could be Idgrod Ravencrone or Idgrod the Younger") != std::string::npos);
+            const auto p = only(out);
+            REQUIRE(p["code"] == "role_ambiguous");
+            REQUIRE(p["people"] == nlohmann::json({"Idgrod Ravencrone", "Idgrod the Younger"}));
         }
 
         SECTION("should resolve the whole name")
         {
             const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Idgrod Ravencrone"}});
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values[1].form == kElder);
         }
     }
@@ -973,7 +1017,7 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         SECTION("should take one the rule admits")
         {
             const auto out = resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Laila"}});
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values[1].form == kJarl);
         }
 
@@ -983,9 +1027,11 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
             balgruuf.office = PlotCasting::Office::Jarl;
             f.population.members.push_back(balgruuf);
             const auto out = resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Laila Law-Giver"}});
-            REQUIRE(out.problem.find("Laila Law-Giver cannot be the authority (whom they are denounced to); it can be "
-                                     "Balgruuf the Greater")
-                    != std::string::npos);
+            const auto p = only(out);
+            REQUIRE(p["code"] == "role_not_admitted");
+            REQUIRE(p["who"] == "Laila Law-Giver");
+            REQUIRE(p["role"] == role("denounce", "authority"));
+            REQUIRE(p["admitted"]["names"] == nlohmann::json({"Balgruuf the Greater"}));
         }
     }
 
@@ -995,7 +1041,9 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
 
         SECTION("should say so, and not judge the authority against nobody")
         {
-            REQUIRE(out.problem == "nothing was named as the mark (who is denounced)");
+            const auto p = only(out);
+            REQUIRE(p["code"] == "role_unnamed");
+            REQUIRE(p["role"] == role("denounce", "mark"));
         }
     }
 
@@ -1005,8 +1053,10 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
 
         SECTION("should say so, listing what can be")
         {
-            REQUIRE(out.problem.find("'a spellbook' names nothing that can be the item") != std::string::npos);
-            REQUIRE(out.problem.find("a ruby; a bottle of skooma") != std::string::npos);
+            const auto p = only(out);
+            REQUIRE(p["code"] == "thing_unknown");
+            REQUIRE(p["text"] == "a spellbook");
+            REQUIRE(p["pool"] == nlohmann::json({"a ruby", "a bottle of skooma"}));
         }
     }
 
@@ -1016,7 +1066,7 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
 
         SECTION("should resolve the settlement it holds")
         {
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values[1].form == kWhiterun);
         }
     }
@@ -1093,7 +1143,7 @@ TEST_CASE("PlotCandidates ranks authority", "[PlotCandidates][engine]")
             const auto* goal = PlotVerbs::Find("denounce");
             const auto out = PlotCandidates::ResolveRoles(
                 *goal, {{"mark", 0, "Balgruuf the Greater"}, {"authority", 0, "Proventus Avenicci"}}, f.Request());
-            REQUIRE(out.problem.empty());
+            REQUIRE(out.problems.empty());
             REQUIRE(out.values[1].form == 0);
             REQUIRE(out.values[1].text == "the people of Whiterun");
         }
@@ -1131,6 +1181,77 @@ TEST_CASE("PlotCandidates ranks authority", "[PlotCandidates][engine]")
         SECTION("should never go to a chief for somebody outside the stronghold")
         {
             REQUIRE_FALSE(Has(against(kNeighbour, "Hulda"), kBurguk));
+        }
+    }
+}
+
+TEST_CASE("PlotCandidates reads a role's name as it is written", "[PlotCandidates][engine]")
+{
+    Fixture f;
+    const auto resolve = [&f](std::string_view text) {
+        return PlotCandidates::ResolveRoles(
+            *PlotVerbs::Find("steal"), {{"item", 0, "a ruby"}, {"mark", 0, std::string{text}}}, f.Request());
+    };
+
+    SECTION("a possessive is the person")
+    {
+        const auto out = resolve("Hulda's");
+        REQUIRE(out.problems.empty());
+        CHECK(out.values[1].form == kNeighbour);
+    }
+
+    SECTION("a name with a hyphen is one word of it")
+    {
+        // Brand-Shei is somebody the mastermind does not know, so he is
+        // refused; but refused as Brand-Shei, not as nobody.
+        const auto out = resolve("Brand-Shei");
+        REQUIRE(out.problems.size() == 1);
+        CHECK(out.problems.front().ToJson()["who"] == "Brand-Shei");
+    }
+
+    SECTION("a name written in lowercase names nobody")
+    {
+        const auto out = resolve("hulda");
+        REQUIRE(out.problems.size() == 1);
+        CHECK(out.problems.front().ToJson()["code"] == "role_names_nobody");
+    }
+
+    SECTION("a thing's article ending in an apostrophe is set aside with no space after it")
+    {
+        // Italian's made things open "un'" before a feminine vowel.
+        f.world.items.front().displayName = "un'Ascia d'ebano";
+        const auto italian = NarrativeEngine::Testing::Synthetic("it", "Item.Articles = un', un\n");
+        auto request = f.Request();
+        request.table = &italian;
+
+        const auto out = PlotCandidates::ResolveRoles(
+            *PlotVerbs::Find("steal"), {{"item", 0, "l'ascia d'ebano"}, {"mark", 0, "Hulda"}}, request);
+        REQUIRE(out.problems.empty());
+        CHECK(out.values[0].form == 0x0000D001);
+    }
+
+    SECTION("a whole name, in a script written without spaces, is that person and not a shorter name inside it")
+    {
+        // As a Japanese trial found it: "Bor" is a run inside "Battle-Born",
+        // and the surname is too common to count, so the two tied.
+        constexpr RE::FormID kJon = 0x00010009;
+        f.population.members.push_back(Person(kJon, "Jon Battle-Born", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(0x0001000A, "Alfhild Battle-Born", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(0x0001000B, "Idolaf Battle-Born", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(0x0001000C, "Bor", kWhiterunHold, kWhiterun));
+        const auto unspaced = NarrativeEngine::Testing::Synthetic("ja", "", "WordSeparated = false\n");
+        auto request = f.Request();
+        request.table = &unspaced;
+
+        const auto out = PlotCandidates::ResolveRoles(
+            *PlotVerbs::Find("steal"), {{"item", 0, "a ruby"}, {"mark", 0, "Jon Battle-Born"}}, request);
+        for (const auto& problem : out.problems) {
+            CHECK(problem.ToJson()["code"] != "role_ambiguous");
+        }
+        if (out.problems.empty()) {
+            CHECK(out.values[1].form == kJon);
+        } else {
+            CHECK(out.problems.front().ToJson()["who"] == "Jon Battle-Born");
         }
     }
 }

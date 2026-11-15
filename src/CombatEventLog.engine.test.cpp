@@ -2,8 +2,10 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
+#include <EventText.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
+#include <ShippedLanguage.h>
 #include <ThreadRole.h>
 
 #include <SKSE/Interfaces.h>
@@ -188,18 +190,18 @@ TEST_CASE("CombatEventLog names the player in its events", "[CombatEventLog][eng
         SECTION("should render text a model can read")
         {
             // The tail is merged into the same recent-events array SkyrimNet
-            // fills, so the sentence is the payload; the kind is only for the
+            // fills, so the line is the payload; the kind is only for the
             // merge step.
             const auto tail = Tail();
             REQUIRE(tail.size() == 1);
             REQUIRE(tail[0].value("type", "") == "combat_event");
-            REQUIRE_FALSE(tail[0].value("text", "").empty());
+            REQUIRE(NarrativeEngine::EventText::Line(NarrativeEngine::Testing::ShippedEnglish(), tail[0])
+                    == "[just now] Dovahkiin enters combat");
         }
 
-        SECTION("should mark the actor as a named one")
+        SECTION("should name the actor in the line")
         {
-            // Unnamed actors are rendered generically; the player never is.
-            REQUIRE(Tail()[0].value("ne_actor_is_named", false));
+            REQUIRE(Tail()[0].at("line").value("actor", "") == "Dovahkiin");
         }
     }
 }
@@ -403,7 +405,7 @@ TEST_CASE("CombatEventLog survives a save and load", "[CombatEventLog][engine]")
         engine.cosave.readCursor = 0;
         CombatEventLog::OnRevert();
         REQUIRE(TailSize() == 0);
-        CombatEventLog::OnLoad(FakeInterface(), 1, 0);
+        CombatEventLog::OnLoad(FakeInterface(), 2, 0);
 
         SECTION("should restore the events")
         {
@@ -482,7 +484,7 @@ TEST_CASE("CombatEventLog feeds the history writer", "[CombatEventLog][engine]")
         {
             REQUIRE(drained.size() == 1);
             REQUIRE(drained[0].sourceKind.starts_with("internal/combat_event/"));
-            REQUIRE_FALSE(drained[0].body.empty());
+            REQUIRE(drained[0].body == "Ysolda enters combat");
         }
 
         SECTION("should hand each entry over only once")

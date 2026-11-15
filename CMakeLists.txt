@@ -87,10 +87,22 @@ endif()
 set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/BookTextRenderer.cpp"
     "${CMAKE_SOURCE_DIR}/src/CharacterBioResolver.cpp"
+    "${CMAKE_SOURCE_DIR}/src/EventText.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ItemGrammar.cpp"
     "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/src/LanguageTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
+    "${CMAKE_SOURCE_DIR}/src/LocalizationRules.cpp"
+    "${CMAKE_SOURCE_DIR}/src/NarrativeText.cpp"
+    "${CMAKE_SOURCE_DIR}/src/PlotRejection.cpp"
+    "${CMAKE_SOURCE_DIR}/src/PromptLanguage.cpp"
+    "${CMAKE_SOURCE_DIR}/src/RenderCheck.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextKeys.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextMatch.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextTemplate.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextUtf8.cpp"
     "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
 )
 
@@ -121,6 +133,7 @@ endforeach()
 
 find_package(directxtk CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(utf8proc CONFIG REQUIRED)
 # Setup your SKSE plugin as an SKSE plugin!
 find_package(CommonLibSSE CONFIG REQUIRED)
 # MinHook — battle-tested function-entry detour library. Used by the
@@ -178,9 +191,19 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ${NARRATIVEENGINE_WARNINGS_AS_ERRORS})
 add_library(NarrativeEngineCore STATIC ${NARRATIVEENGINE_CORE_SOURCES})
 target_compile_features(NarrativeEngineCore PUBLIC cxx_std_23)
 target_include_directories(NarrativeEngineCore PUBLIC include)
+# SimpleIni is header-only and engine-free; LanguageTable parses language files
+# with it. Private: no public header includes it.
+target_include_directories(
+    NarrativeEngineCore
+    PRIVATE "${SIMPLEINI_INCLUDE_DIRS}"
+)
 # nlohmann_json is header-only and carries nothing engine-specific, so a core
 # source may parse JSON without breaking the "runs with no Skyrim" rule.
 target_link_libraries(NarrativeEngineCore PUBLIC nlohmann_json::nlohmann_json)
+# utf8proc is a small C library with no engine in it: Unicode case mapping,
+# folding and character categories for TextUtf8. No public header includes
+# it, so it links privately.
+target_link_libraries(NarrativeEngineCore PRIVATE utf8proc::utf8proc)
 
 # ---------------------------------------------------------------------------
 # The advertised version
@@ -445,6 +468,59 @@ if(DEFINED OUTPUT_FOLDER)
         message(
             FATAL_ERROR
             "manifest.json version ${json_version} does not match settings/NarrativeEngine.yaml version ${NARRATIVEENGINE_VERSION}"
+        )
+    endif()
+
+    # The manifest's `languages`, which SkyrimNet's hub filters on, must be
+    # exactly the `Code` of every language file that ships, draft or
+    # reviewed. Players' overlays (`<stem>.custom.ini`) are not shipped.
+    string(JSON json_language_count LENGTH "${json_manifest}" languages)
+    set(manifest_languages "")
+    if(json_language_count GREATER 0)
+        math(EXPR json_language_last "${json_language_count} - 1")
+        foreach(i RANGE ${json_language_last})
+            string(JSON code GET "${json_manifest}" languages ${i})
+            list(APPEND manifest_languages "${code}")
+        endforeach()
+    endif()
+    file(
+        GLOB LANGUAGE_FILES
+        CONFIGURE_DEPENDS
+        "${STATICS_SOURCE_DIR}/SKSE/Plugins/NarrativeEngine/Languages/*.ini"
+    )
+    set(shipped_languages "")
+    foreach(language_file IN LISTS LANGUAGE_FILES)
+        if(language_file MATCHES "\\.custom\\.ini$")
+            continue()
+        endif()
+        file(
+            STRINGS
+            "${language_file}"
+            code_line
+            REGEX "^[ \t]*Code[ \t]*="
+            LIMIT_COUNT 1
+        )
+        # A ';' would split the value into two list items; shown as ','.
+        string(REPLACE "\;" "," code_line "${code_line}")
+        string(
+            REGEX REPLACE
+            # The whole value, as the loader reads it: a ';' after a
+            # value is part of it.
+            "^[ \t]*Code[ \t]*=[ \t]*(.*[^ \t\r])[ \t\r]*$"
+            "\\1"
+            code
+            "${code_line}"
+        )
+        list(APPEND shipped_languages "${code}")
+    endforeach()
+    list(SORT manifest_languages)
+    list(SORT shipped_languages)
+    if(NOT manifest_languages STREQUAL shipped_languages)
+        string(REPLACE ";" ", " manifest_shown "${manifest_languages}")
+        string(REPLACE ";" ", " shipped_shown "${shipped_languages}")
+        message(
+            FATAL_ERROR
+            "manifest.json languages [${manifest_shown}] do not match the Code of the shipped language files [${shipped_shown}]"
         )
     endif()
 
@@ -798,6 +874,15 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         NarrativeEngineTests
         PRIVATE NarrativeEngineCore Catch2::Catch2WithMain
     )
+    # Where the shipped data files live, for tests that check every file
+    # statics/ ships (LanguageTable's shipped-files case), and the fixtures
+    # the C++ and the dashboard both run (TextTemplate's).
+    target_compile_definitions(
+        NarrativeEngineTests
+        PRIVATE
+            NARRATIVEENGINE_STATICS_DIR="${STATICS_SOURCE_DIR}"
+            NARRATIVEENGINE_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/testsupport/fixtures"
+    )
 
     # Register each TEST_CASE with CTest individually, so `ctest -R` can
     # select one and a failure names the case rather than "the test binary".
@@ -862,6 +947,8 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/Decorators.cpp"
+        "${CMAKE_SOURCE_DIR}/src/RunChecks.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotTrial.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/FineRoads.cpp"
         "${CMAKE_SOURCE_DIR}/src/TravelGraph.cpp"
@@ -920,6 +1007,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/PlotCandidates.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotPlanning.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotMemories.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotText.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotAwareness.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotTestPlots.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventHistoryWriter.cpp"
@@ -942,6 +1030,8 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/BeatSystem.cpp"
         "${CMAKE_SOURCE_DIR}/src/DashboardUIManager.cpp"
         "${CMAKE_SOURCE_DIR}/src/Plugin.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Localization.cpp"
+        "${CMAKE_SOURCE_DIR}/src/TextKeysAll.cpp"
     )
 
     if(engine_test_sources)
@@ -952,6 +1042,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             ${engine_test_sources}
             ${NARRATIVEENGINE_MOCKED_SOURCES}
             testsupport/EngineMock.cpp
+            testsupport/ShippedLanguage.cpp
             testsupport/CommonLibSSERuntimeStubs.cpp
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
@@ -996,6 +1087,9 @@ if(NARRATIVEENGINE_BUILD_TESTS)
                 ENABLE_COMMONLIBSSE_TESTING
                 # This target compiles Plugin.cpp, whose startup line names it.
                 NARRATIVEENGINE_VERSION="${NARRATIVEENGINE_VERSION}"
+                # Where the shipped data files live, for tests that render the
+                # real language files (testsupport/ShippedLanguage).
+                NARRATIVEENGINE_STATICS_DIR="${STATICS_SOURCE_DIR}"
         )
         # Same forced PCH as the DLL, so these sources compile exactly as they
         # do in production rather than in some near-miss configuration.

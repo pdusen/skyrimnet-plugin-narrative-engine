@@ -4,13 +4,16 @@
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <NPCLetterBeat.h>
+#include <PromptLanguage.h>
 #include <SenderCandidatePool.h>
 #include <SenderDialogue.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
+#include <TextUtf8.h>
 
 #include <nlohmann/json.hpp>
 
@@ -333,7 +336,7 @@ namespace NarrativeEngine::LetterComposer
                 // `age_hours`.
                 if (const double ageSeconds = SkyrimNetEvents::MemoryAgeGameSeconds(m, nowGameSeconds);
                     ageSeconds >= 0.0) {
-                    out["age"] = SkyrimNetEvents::FormatRelativeGameTime(ageSeconds);
+                    out["age"] = SkyrimNetEvents::RelativeGameTime(ageSeconds);
                     out["age_seconds"] = ageSeconds;
                 }
                 // `emotion` and `location` are optional on the memory
@@ -502,6 +505,7 @@ namespace NarrativeEngine::LetterComposer
             root["max_words"] = cfg.letterContentMaxWords;
 
             root["player_name"] = playerName;
+            PromptLanguage::Add(root, {"body", "letter_label"}, Localization::Get());
             root["has_motivating_memory"] = motivatingMemory.is_object();
             root["motivating_memory"] = motivatingMemory.is_object() ? motivatingMemory : nlohmann::json::object();
 
@@ -555,18 +559,17 @@ namespace NarrativeEngine::LetterComposer
         // Helper: case-insensitive whole-word prefix match. Returns
         // index past the prefix (and any following whitespace) if the
         // string begins with `prefix`+whitespace, else 0.
-        std::size_t PrefixSkip(const std::string& s, std::string_view prefix)
+        // Where `s` goes on after an opening `prefix`, or 0. In a script that
+        // separates words the prefix must be a word of its own; in one that
+        // does not, it may run straight into the name.
+        std::size_t PrefixSkip(const std::string& s, std::string_view prefix, bool wordSeparated)
         {
             if (s.size() <= prefix.size())
                 return 0;
-            for (std::size_t i = 0; i < prefix.size(); ++i) {
-                const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(s[i])));
-                const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(prefix[i])));
-                if (a != b)
-                    return 0;
-            }
+            if (!TextUtf8::EqualsFolded(std::string_view{s}.substr(0, prefix.size()), prefix))
+                return 0;
             const char nextCh = s[prefix.size()];
-            if (nextCh != ' ' && nextCh != '\t')
+            if (wordSeparated && nextCh != ' ' && nextCh != '\t')
                 return 0;
             std::size_t i = prefix.size();
             while (i < s.size() && (s[i] == ' ' || s[i] == '\t'))
@@ -574,78 +577,103 @@ namespace NarrativeEngine::LetterComposer
             return i;
         }
 
-        // Strip a trailing " the X" title, case-insensitive. Returns
-        // the original name if no match.
-        std::string StripSuffixTitle(const std::string& name)
+        using TextKeys::Key;
+        using TextKeys::Param;
+
+        constexpr std::array kTitleParams{Param{"sender", TextTemplate::Kind::Person}};
+        constexpr Key kFallbackTitle{"Letter", "fallback_title", kTitleParams};
+        constexpr Key kItemCard{"Letter", "item_card", {}};
+        // A name's leading titles ("Jarl", "Housecarl"), and the words a
+        // trailing epithet follows ("the" in "Balgruuf the Greater"): plain
+        // [Matching] lists.
+        constexpr std::string_view kTitleStart = "Title.Strip.Start";
+        constexpr std::string_view kTitleAfter = "Title.Strip.After";
+
+        // The last place " <word> " stands in `name`, whatever its case, or
+        // npos.
+        std::size_t LastSeparator(std::string_view name, std::string_view word)
         {
-            // Find the last " the " (case-insensitive), then drop it
-            // and everything after.
-            const std::string lower = [&] {
-                std::string l = name;
-                for (auto& c : l)
-                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                return l;
-            }();
-            const auto pos = lower.rfind(" the ");
-            if (pos == std::string::npos)
-                return name;
-            // Make sure there's a word after " the " — otherwise the
-            // " the " is mid-name (like "Wuuthrad of the Ysmir") and
-            // we shouldn't strip.
-            if (pos + 5 >= name.size())
-                return name;
-            return name.substr(0, pos);
+            const auto length = word.size() + 2;
+            for (std::size_t at = name.size() >= length ? name.size() - length + 1 : 0; at-- > 0;) {
+                if (name[at] == ' ' && name[at + length - 1] == ' '
+                    && TextUtf8::EqualsFolded(name.substr(at + 1, word.size()), word)) {
+                    return at;
+                }
+            }
+            return std::string_view::npos;
         }
 
-        // Strip a leading title prefix. Returns the original name if
-        // no match.
-        std::string StripPrefixTitle(const std::string& name)
+        // Strip a trailing epithet: everything from the last " <word> " of
+        // `after` on, case-insensitive, provided a word follows it. Returns
+        // the original name if no match.
+        std::string StripSuffixTitle(const std::string& name, const std::vector<std::string>& after)
         {
-            static constexpr std::array<std::string_view, 14> kPrefixes{
-                "Jarl",
-                "Thane",
-                "Master",
-                "Mistress",
-                "Captain",
-                "Commander",
-                "Housecarl",
-                "Lord",
-                "Lady",
-                "Sir",
-                "Brother",
-                "Sister",
-                "Mother",
-                "Father",
-            };
-            for (auto p : kPrefixes) {
-                const auto skip = PrefixSkip(name, p);
-                if (skip > 0)
+            std::size_t best = std::string::npos;
+            std::size_t bestLength = 0;
+            for (const auto& word : after) {
+                const auto pos = LastSeparator(name, word);
+                if (pos != std::string::npos && (best == std::string::npos || pos > best)) {
+                    best = pos;
+                    bestLength = word.size() + 2;
+                }
+            }
+            // A word has to follow, or the separator is mid-name (like
+            // "Wuuthrad of the Ysmir") and nothing is stripped.
+            if (best == std::string::npos || best + bestLength >= name.size()) {
+                return name;
+            }
+            return name.substr(0, best);
+        }
+
+        // Strip a leading title. Returns the original name if no match.
+        std::string StripPrefixTitle(const std::string& name,
+                                     const std::vector<std::string>& titles,
+                                     bool wordSeparated)
+        {
+            for (const auto& title : titles) {
+                const auto skip = PrefixSkip(name, title, wordSeparated);
+                if (skip > 0) {
                     return name.substr(skip);
+                }
             }
             return name;
         }
     } // namespace
 
-    std::string SynthesizeFallbackLabel(const std::string& senderFullName)
+    const std::vector<TextKeys::Key>& LabelKeys()
+    {
+        static const std::vector<Key> keys{kFallbackTitle, kItemCard};
+        return keys;
+    }
+
+    bool FitsTitle(std::string_view label)
+    {
+        return !label.empty() && TextUtf8::CodePointCount(label) <= kTitleCharacters;
+    }
+
+    std::string ItemCard(const LanguageTable::Table& table)
+    {
+        return table.Render(kItemCard, {});
+    }
+
+    std::string SynthesizeFallbackLabel(const LanguageTable::Table& table, const std::string& senderFullName)
     {
         // Note: deliberately leave `senderFullName` un-trimmed beyond
         // sanitization — leading / trailing whitespace inside the name
         // itself would already have been stripped by LLMTextSanitizer
         // upstream.
-        static constexpr std::string_view kPrefix = "Note from ";
-        constexpr std::size_t kBudget = 24;
-        constexpr std::size_t kNameRoom = kBudget - kPrefix.size(); // = 14
+        const auto render = [&table](std::string_view name) {
+            return table.Render(kFallbackTitle,
+                                TextTemplate::Arguments{}.Set("sender", TextTemplate::Person{std::string{name}}));
+        };
+        const auto fits = [](const std::string& title) { return TextUtf8::CodePointCount(title) <= kTitleCharacters; };
 
         auto tryName = [&](const std::string& name) -> std::optional<std::string> {
             if (name.empty())
                 return std::nullopt;
-            if (name.size() <= kNameRoom) {
-                std::string out;
-                out.reserve(kPrefix.size() + name.size());
-                out.append(kPrefix);
-                out.append(name);
-                return out;
-            }
+            auto title = render(name);
+            if (fits(title))
+                return title;
             return std::nullopt;
         };
 
@@ -658,28 +686,35 @@ namespace NarrativeEngine::LetterComposer
         // callback. Skipping for now; documented in the phase plan as
         // a known omission. If/when SkyrimNet exposes it, plumb here.
 
-        // Candidate 3: strip trailing " the X" title.
-        const auto suffixStripped = StripSuffixTitle(senderFullName);
+        // Candidate 3: strip a trailing epithet.
+        const auto suffixStripped = StripSuffixTitle(senderFullName, table.Matching().List(kTitleAfter));
         if (suffixStripped != senderFullName) {
             if (auto r = tryName(suffixStripped))
                 return *r;
         }
 
-        // Candidate 4: also strip leading title prefix.
-        const auto bothStripped = StripPrefixTitle(suffixStripped);
+        // Candidate 4: also strip a leading title.
+        const auto bothStripped = StripPrefixTitle(
+            suffixStripped, table.Matching().List(kTitleStart), table.Matching().options.wordSeparated);
         if (bothStripped != suffixStripped) {
             if (auto r = tryName(bothStripped))
                 return *r;
         }
 
-        // Candidate 5: build "Note from <bothStripped>" and right-
-        // truncate the whole string to 24 bytes. Guarantees a result.
-        std::string out;
-        out.reserve(kBudget);
-        out.append(kPrefix);
-        out.append(bothStripped.empty() ? senderFullName : bothStripped);
-        LLMTextSanitizer::TruncateUTF8(out, kBudget);
-        return out;
+        // Candidate 5: the name cut, a character at a time, until the
+        // title fits. The template need not put the name last -- a
+        // language can say "{sender}'s letter" -- so it is the rendered
+        // title that is measured, not the name. Guarantees a result.
+        const std::string base = bothStripped.empty() ? senderFullName : bothStripped;
+        for (auto keep = TextUtf8::CodePointCount(base);; --keep) {
+            std::string name = base;
+            TextUtf8::TruncateToCodePoints(name, keep);
+            auto title = render(name);
+            if (fits(title) || keep == 0) {
+                TextUtf8::TruncateToCodePoints(title, kTitleCharacters);
+                return title;
+            }
+        }
     }
 
     void Compose(const BeatContext& ctx,
@@ -889,23 +924,24 @@ namespace NarrativeEngine::LetterComposer
                     return;
                 }
 
-                // Engine FULL field is 24 bytes hard. Fall back to
-                // the deterministic label helper when the LLM's
-                // `letter_label` is missing, empty, or too long.
-                // Sanitization above is bytes-in / bytes-out — measure
-                // the post-sanitize size.
-                if (label.empty() || label.size() > 24) {
+                // A book's title holds kTitleCharacters characters.
+                // Fall back to the deterministic label helper when the
+                // LLM's `letter_label` is missing, empty, or too long.
+                // Characters, not bytes: a Russian title is two bytes a
+                // letter and a Japanese one three.
+                if (!FitsTitle(label)) {
                     const std::string original = label;
-                    label = SynthesizeFallbackLabel(senderName);
+                    label = SynthesizeFallbackLabel(Localization::Get(), senderName);
                     if (original.empty()) {
                         logger::info("LetterComposer: letter_label missing/empty; "
                                      "fell back to '{}'",
                                      label);
                     } else {
-                        logger::info("LetterComposer: letter_label '{}' exceeded 24-byte cap "
-                                     "(was {} bytes); fell back to '{}'",
+                        logger::info("LetterComposer: letter_label '{}' exceeded the {}-character cap "
+                                     "(was {}); fell back to '{}'",
                                      original,
-                                     original.size(),
+                                     kTitleCharacters,
+                                     TextUtf8::CodePointCount(original),
                                      label);
                     }
                 }

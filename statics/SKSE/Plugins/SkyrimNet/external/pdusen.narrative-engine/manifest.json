@@ -8,6 +8,7 @@
   "nsfw": false,
   "version": "0.9.3",
   "min_skyrimnet_version": "0.26.0",
+  "languages": ["en", "fr", "de", "it", "es", "pl", "ru", "ja", "zh"],
   "mods": [
     {
       "name": "NarrativeEngine",

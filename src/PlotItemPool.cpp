@@ -1,5 +1,6 @@
 #include <PlotItemPool.h>
 
+#include <Localization.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -75,7 +76,23 @@ namespace NarrativeEngine::PlotItemPool
                 continue;
             }
 
-            g_items.push_back({object->GetFormID(), raw.displayName, raw.category});
+            // A language file may reword it, by the line's EditorID.
+            const auto* text = Localization::Get().DataText(kDataSection, raw.editorId);
+            g_items.push_back(
+                {object->GetFormID(), text != nullptr ? *text : raw.displayName, raw.category, raw.editorId});
+        }
+
+        {
+            std::vector<std::string> ids;
+            for (const auto& raw : report.items) {
+                ids.push_back(raw.editorId);
+            }
+
+            // Overrides that reword nothing: a typo, or a row from a mod that is
+            // not installed.
+            for (const auto& line : Localization::Get().UnmatchedData(kDataSection, ids)) {
+                logger::warn("PlotItems: the language file's {} matches no item line here", line);
+            }
         }
 
         logger::info("PlotItems: loaded {} item(s); {} rejected by the parse, {} unresolved, {} not carryable.",

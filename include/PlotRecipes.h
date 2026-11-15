@@ -67,6 +67,11 @@ namespace NarrativeEngine::PlotRecipes
         // "a sheaf of Elven Arrows". The game's own capitalisation is kept,
         // because lowering it would lower "Nordic" and "Skyforge" with it.
         std::string displayName;
+        // The game's own name, bare, and whether it is ammunition: what
+        // displayName was phrased from, kept so a language trial can phrase
+        // it again in the language it runs.
+        std::string name;
+        bool ammo = false;
         Craft craft = Craft::Smith;
         // The skill, 0 to 100, the recipe asks of whoever makes it.
         int skill = 0;
@@ -97,10 +102,6 @@ namespace NarrativeEngine::PlotRecipes
 
     // Which of the forge's three crafts makes this, or none.
     [[nodiscard]] std::optional<Craft> ForgeCraftOf(Made made) noexcept;
-
-    // A thing's name as it is said: "an Iron Sword", and for ammunition
-    // "a sheaf of Iron Arrows".
-    [[nodiscard]] std::string Phrase(std::string_view name, bool ammo);
 
     // One recipe per name within a craft, keeping the one that asks the
     // least skill, then the one whose ingredients are worth least. Order is

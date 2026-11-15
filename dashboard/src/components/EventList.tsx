@@ -1,3 +1,4 @@
+import { t } from '../i18n/strings';
 import type { EventEntry } from '../types';
 
 interface Props {
@@ -8,8 +9,8 @@ export function EventList({ items }: Props) {
     if (items.length === 0) {
         return (
             <section className="panel event-list">
-                <h2>Recent Events</h2>
-                <div className="placeholder-inline">No recent events.</div>
+                <h2>{t('director.recent_events')}</h2>
+                <div className="placeholder-inline">{t('director.no_events')}</div>
             </section>
         );
     }
@@ -19,10 +20,11 @@ export function EventList({ items }: Props) {
     const newestFirst = [...items].sort((a, b) => b.gameTime - a.gameTime);
     return (
         <section className="panel event-list">
-            <h2>Recent Events</h2>
+            <h2>{t('director.recent_events')}</h2>
             <ul>
                 {newestFirst.map((e, i) => (
                     <li key={i}>
+                        {/* SkyrimNet's own event type: a token, shown as sent. */}
                         <span className="type">[{e.type}]</span>
                         <span className="text">{e.text}</span>
                     </li>

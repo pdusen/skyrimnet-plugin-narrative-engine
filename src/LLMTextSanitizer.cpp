@@ -61,7 +61,8 @@ namespace NarrativeEngine::LLMTextSanitizer
         //                             verbatim (handled by the caller).
         //
         // Only codepoints that LLMs frequently emit as typographic / smart /
-        // invisible noise are listed. Everything else (accented Latin
+        // invisible noise are listed, and the one letter of a supported
+        // language that no Skyrim font can draw. Everything else (accented Latin
         // letters, Cyrillic, Greek, Hebrew, Arabic, CJK, language-native
         // punctuation like the French / German guillemets « », etc.) falls
         // through the default arm so non-English players keep their
@@ -111,6 +112,14 @@ namespace NarrativeEngine::LLMTextSanitizer
             // the '--' substitution doesn't suit it.
             case 0x2014:
                 return std::string_view{"--"};
+
+            // -------- letters no Skyrim font draws --------
+            // The game's Cyrillic font set has no ё, and its own Russian
+            // text writes е throughout, as printed Russian commonly does.
+            case 0x0451: // ё
+                return std::string_view{"\xD0\xB5"};
+            case 0x0401: // Ё
+                return std::string_view{"\xD0\x95"};
 
             // -------- ellipsis --------
             case 0x2026:

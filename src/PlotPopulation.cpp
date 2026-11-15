@@ -769,7 +769,7 @@ namespace NarrativeEngine::PlotPopulation
             // sends a child to watch a house, or aims one at them.
             if (IsChild(RE::TESForm::LookupByID<RE::TESNPC>(npcId))) {
                 ++children;
-                g_population.absent.push_back({GossipGraph::NpcName(npcId), "a child"});
+                g_population.absent.push_back({GossipGraph::NpcName(npcId), "child"});
                 continue;
             }
 
@@ -781,6 +781,7 @@ namespace NarrativeEngine::PlotPopulation
 
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
                 member.skills = ReadSkills(npcForm);
+                member.female = npcForm->IsFemale();
                 member.tradesForLiving = InAnyOf(npcForm, tradeJobs);
                 for (const auto& [faction, office] : officeJobs) {
                     if (InAnyOf(npcForm, {faction})) {

@@ -26,6 +26,7 @@
 #include <GossipTick.h>
 #include <HoldGrid.h>
 #include <LetterPool.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <MCMEventSink.h>
@@ -182,6 +183,10 @@ namespace NarrativeEngine
                 // Settings::Load() runs FIRST so later subsystems can
                 // consult the populated Config when they initialize.
                 Settings::Load();
+                // Localization reads its [Localization] override from
+                // Settings, and must publish the session's language table
+                // before any subsystem below can render a sentence.
+                Localization::Load();
                 // EditorIds inverts the engine's EditorID table, which is
                 // complete by kDataLoaded. Before every subsystem below:
                 // HoldGrid, gossip and plots all read forms' EditorIDs while

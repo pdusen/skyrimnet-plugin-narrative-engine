@@ -47,7 +47,7 @@
     },
     {
       "label": "build.ps1: test",
-      "detail": "build + run the Catch2 unit tests",
+      "detail": "build + run the C++ and dashboard unit tests",
       "type": "process",
       "command": "pwsh",
       "args": ["-NoProfile", "-File", "${workspaceFolder}/build.ps1", "test"],

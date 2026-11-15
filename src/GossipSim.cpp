@@ -14,6 +14,7 @@
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
 #include <GossipLog.h>
+#include <Localization.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -1248,7 +1249,9 @@ namespace NarrativeEngine::GossipSim
         // no token and marshals for itself. Only the FormID is safe to
         // carry across; the name is read on the main thread, where
         // touching the form is allowed.
-        DebugNotify::PostActorNamed(originNpc, "[NE] New rumor spreading from {}");
+        DebugNotify::PostActorNamed(originNpc, [](const std::string& name) {
+            return DebugNotify::Text::RumorSpreading(Localization::Get(), name);
+        });
         return id;
     }
 

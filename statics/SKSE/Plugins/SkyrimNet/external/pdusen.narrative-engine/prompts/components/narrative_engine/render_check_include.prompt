@@ -1,0 +1,3 @@
+{# render_check_include.prompt — included by
+   narrative_engine_render_check.prompt inside a loop, after a {% set %}:
+   words the loop's `check_item` and the set `check_tail`. #}{{ check_item }}+{{ check_tail }}

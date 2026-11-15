@@ -1,0 +1,28 @@
+{# narrative_engine_render_check.prompt — the dashboard's render check.
+
+   Sent by the Settings tab's Run checks button (RunChecks.cpp); see
+   RenderCheck.h. Each numbered line holds a sentinel only if one thing about
+   SkyrimNet's rendering works as the other prompts rely on:
+
+     1  render_template reaches a file by a name built here, from a context
+        value: components/narrative_engine/render_check_sentinel.prompt.
+     2  the ne_render_check decorator's JSON answer is an object whose field
+        the template reads.
+     3  components/narrative_engine/render_check_include.prompt sees this
+        loop's variable and a {% set %} variable.
+
+   The model is asked to repeat the lines, and RenderCheck::Evaluate looks
+   for the sentinels in what it says. Context: render_check { file, loop,
+   set }. #}
+[ system ]
+You are part of a test of a text template. Repeat what you are given exactly, character for character, and add
+nothing.
+[ end system ]
+
+[ user ]
+Repeat these three lines exactly as they are written, and nothing else:
+
+1: {{ render_template("components\\narrative_engine\\render_check_" + render_check.file) }}
+{% set check = ne_render_check(player.UUID) %}2: {% if check != "" %}{{ check.sentinel }}{% endif %}
+{% for check_item in render_check.loop %}{% set check_tail = render_check.set %}3: {% include "components/narrative_engine/render_check_include.prompt" %}{% endfor %}
+[ end user ]

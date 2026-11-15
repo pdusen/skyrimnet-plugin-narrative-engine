@@ -420,17 +420,6 @@ namespace NarrativeEngine::PlotModel
         // iPlotStepHistoryCap.
         std::vector<Step> history;
 
-        // Why the mastermind gave up, in their own terms -- "she decided
-        // the ledger was not worth what taking it would cost her".
-        //
-        // Empty unless the outcome is Conceded. Kept on the plot rather
-        // than only in the trace because it is the ONLY record of why a
-        // scheme ended: `Conceded` says that it did, and a reader who
-        // wants to know what happened has nowhere else to look. Step 19
-        // writes memories from terminal plots and this is the sentence
-        // they will want.
-        std::string concession;
-
         // Ways this plot tried and found do not work: each a verb against
         // the person it acts on. Every step a failure abandons lands here,
         // and no later plan may use any of them again; see
@@ -479,8 +468,10 @@ namespace NarrativeEngine::PlotModel
     // Verb plus target, or the bare verb when there is no target name.
     [[nodiscard]] std::string Label(StepType type, std::string_view targetName);
 
-    // A verb step's dashboard sentence; otherwise the step's own prose when
-    // it has some, and the verb-plus-target form when it does not.
+    // A verb step's dashboard sentence, in English; otherwise the step's own
+    // prose when it has some, and the verb-plus-target form when it does
+    // not. For the plot log and for matching, never for a prompt, which
+    // words a step itself (PlotPlanning::StepRecord).
     [[nodiscard]] std::string Label(const Step& step);
 
     // The plot's title, as the dashboard card's heading. Same

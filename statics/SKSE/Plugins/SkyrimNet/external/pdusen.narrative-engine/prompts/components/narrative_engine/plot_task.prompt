@@ -1,0 +1,66 @@
+{# plot_task.prompt — the work of one plot step, as a phrase to follow "You
+   sent Aeta to" or "You need to": "steal a ruby from Hulda". Included by
+   plot_awareness.prompt after setting `task` to a step record (see
+   plot_step.prompt; `open` and `agent_open` are unused here, since an
+   unfilled slot always reads as someone, somewhere or something) and `side`
+   to mastermind or agent: the two are told the work from either end, so the
+   mastermind's says "your side" where the agent's says "their side".
+
+   One branch per verb and side in PlotVerbs::kVerbs. A test fails the build
+   when a verb has none. No trailing newline. #}{% if existsIn(task.fill, "authority") %}{% set words.authority = task.fill.authority %}{% else %}{% set words.authority = "someone" %}{% endif -%}
+{% if existsIn(task.fill, "item") %}{% set words.item = task.fill.item %}{% else %}{% set words.item = "something" %}{% endif -%}
+{% if existsIn(task.fill, "mark") %}{% set words.mark = task.fill.mark %}{% else %}{% set words.mark = "someone" %}{% endif -%}
+{% if existsIn(task.fill, "place") %}{% set words.place = task.fill.place %}{% else %}{% set words.place = "somewhere" %}{% endif -%}
+{% if existsIn(task.fill, "recipient") %}{% set words.recipient = task.fill.recipient %}{% else %}{% set words.recipient = "someone" %}{% endif -%}
+{% if existsIn(task.fill, "seller") %}{% set words.seller = task.fill.seller %}{% else %}{% set words.seller = "someone" %}{% endif -%}
+{% if existsIn(task.fill, "subject") %}{% set words.subject = task.fill.subject %}{% else %}{% set words.subject = "someone" %}{% endif -%}
+{% if existsIn(task.fill, "witness") %}{% set words.witness = task.fill.witness %}{% else %}{% set words.witness = "someone" %}{% endif -%}
+{% if task.verb == "watch" and side == "mastermind" -%}
+    keep watch on {{ words.mark }} and learn their habits{% else if task.verb == "watch" and side == "agent" -%}
+    keep watch on {{ words.mark }} and learn their habits{% else if task.verb == "ask_around" and side == "mastermind" -%}
+    ask around {{ words.place }} about {{ words.mark }}{% else if task.verb == "ask_around" and side == "agent" -%}
+    go around {{ words.place }} asking questions about {{ words.mark }}{% else if task.verb == "steal" and side == "mastermind" -%}
+    steal {{ words.item }} from {{ words.mark }}{% else if task.verb == "steal" and side == "agent" -%}
+    steal {{ words.item }} from {{ words.mark }}{% else if task.verb == "buy" and side == "mastermind" -%}
+    buy {{ words.item }} from {{ words.seller }}{% else if task.verb == "buy" and side == "agent" -%}
+    buy {{ words.item }} from {{ words.seller }}{% else if task.verb == "deliver" and side == "mastermind" -%}
+    bring {{ words.item }} to {{ words.recipient }}{% else if task.verb == "deliver" and side == "agent" -%}
+    bring {{ words.item }} to {{ words.recipient }}{% else if task.verb == "plant" and side == "mastermind" -%}
+    hide {{ words.item }} among {{ words.mark }}'s belongings{% else if task.verb == "plant" and side == "agent" -%}
+    hide {{ words.item }} among {{ words.mark }}'s belongings{% else if task.verb == "bribe" and side == "mastermind" -%}
+    pay {{ words.mark }} to look the other way{% else if task.verb == "bribe" and side == "agent" -%}
+    pay {{ words.mark }} to look the other way{% else if task.verb == "win_over" and side == "mastermind" -%}
+    win {{ words.mark }} over to your side{% else if task.verb == "win_over" and side == "agent" -%}
+    win {{ words.mark }} over to their side{% else if task.verb == "threaten" and side == "mastermind" -%}
+    warn {{ words.mark }} to stay out of your affairs{% else if task.verb == "threaten" and side == "agent" -%}
+    warn {{ words.mark }} to stay out of their affairs{% else if task.verb == "spread_rumors" and side == "mastermind" -%}
+    spread ugly talk about {{ words.mark }} around {{ words.place }}{% else if task.verb == "spread_rumors" and side == "agent" -%}
+    spread ugly talk about {{ words.mark }} around {{ words.place }}{% else if task.verb == "denounce" and side == "mastermind" -%}
+    denounce {{ words.mark }} to {{ words.authority }}{% else if task.verb == "denounce" and side == "agent" -%}
+    denounce {{ words.mark }} to {{ words.authority }}{% else if task.verb == "sabotage" and side == "mastermind" -%}
+    sabotage {{ words.mark }}'s livelihood{% else if task.verb == "sabotage" and side == "agent" -%}
+    sabotage {{ words.mark }}'s livelihood{% else if task.verb == "silence" and side == "mastermind" -%}
+    pay {{ words.witness }} to keep quiet{% else if task.verb == "silence" and side == "agent" -%}
+    pay {{ words.witness }} to keep quiet{% else if task.verb == "falsify" and side == "mastermind" -%}
+    falsify {{ words.item }} in {{ words.subject }}'s name{% else if task.verb == "falsify" and side == "agent" -%}
+    falsify {{ words.item }} in {{ words.subject }}'s name{% else if task.verb == "dig_up" and side == "mastermind" -%}
+    dig up {{ words.item }} proving {{ words.mark }}'s wrongdoing{% else if task.verb == "dig_up" and side == "agent" -%}
+    dig up {{ words.item }} proving {{ words.mark }}'s wrongdoing{% else if task.verb == "blackmail" and side == "mastermind" -%}
+    blackmail {{ words.mark }} into serving you{% else if task.verb == "blackmail" and side == "agent" -%}
+    blackmail {{ words.mark }} into serving them{% else if task.verb == "destroy" and side == "mastermind" -%}
+    destroy {{ words.item }} belonging to {{ words.mark }}{% else if task.verb == "destroy" and side == "agent" -%}
+    destroy {{ words.item }} belonging to {{ words.mark }}{% else if task.verb == "petition" and side == "mastermind" -%}
+    petition {{ words.authority }} on your behalf{% else if task.verb == "petition" and side == "agent" -%}
+    petition {{ words.authority }} on their behalf{% else if task.verb == "expose" and side == "mastermind" -%}
+    show {{ words.item }} to {{ words.authority }} as proof against {{ words.mark }}{% else if task.verb == "expose" and side == "agent" -%}
+    show {{ words.item }} to {{ words.authority }} as proof against {{ words.mark }}{% else if task.verb == "smith" and side == "mastermind" -%}
+    smith {{ words.item }}{% else if task.verb == "smith" and side == "agent" -%}
+    smith {{ words.item }} for them{% else if task.verb == "concoct" and side == "mastermind" -%}
+    concoct {{ words.item }}{% else if task.verb == "concoct" and side == "agent" -%}
+    concoct {{ words.item }} for them{% else if task.verb == "enchant" and side == "mastermind" -%}
+    make {{ words.item }} at an arcane enchanter{% else if task.verb == "enchant" and side == "agent" -%}
+    make {{ words.item }} for them at an arcane enchanter{% else if task.verb == "set" and side == "mastermind" -%}
+    make {{ words.item }}{% else if task.verb == "set" and side == "agent" -%}
+    make {{ words.item }} for them{% else if task.verb == "fletch" and side == "mastermind" -%}
+    fletch {{ words.item }}{% else if task.verb == "fletch" and side == "agent" -%}
+    fletch {{ words.item }} for them{% endif -%}

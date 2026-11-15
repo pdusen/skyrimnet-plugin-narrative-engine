@@ -33,7 +33,7 @@ telling in its own right, at its own length.
 Each version has its own length, and these are requirements rather than
 suggestions:
 
-{% for b in band_specs %}- Version {{ b.index }}: {{ b.length }}.
+{% for b in band_specs %}- Version {{ b.index }}: {% if b.length.lo == 0 %}no more than {{ b.length.hi }} sentences{% else %}{{ b.length.lo }} to {{ b.length.hi }} sentences{% endif %}.
 {% endfor %}
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the object.
@@ -78,5 +78,5 @@ Every entry in `bands` must be:
 {% endif -%}
 
 Write {{ band_count }} versions of this story, freshest first, each at the
-length listed for it.
+length listed for it.{% include "components/narrative_engine/output_language.prompt" %}
 [ end user ]

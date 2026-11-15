@@ -3,11 +3,12 @@
    it could be either stolen or bought. Whoever it is got from is decided
    afterwards. The answer is steal or buy.
    Receives: mastermind { name, standing }, bio, ambition, scheme, finish,
-     history [string], plan [string] (numbered), need { step (its number
-     in plan), sketch, item }, options [{ key, line }].
+     history [{ step, outcome }], plan [step], need { step (its number in
+     plan), sketch (that step), item }, options [{ key, step }]. Steps are
+     records, worded by plot_step and plot_done.
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
 [ state who ]
-{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {% set standing = mastermind.standing %}{% include "components/narrative_engine/plot_standing.prompt" %}{% endif %}.
 {{ bio.summary }}
 [ end state ]
 
@@ -17,16 +18,16 @@ It is meant to end with this: {{ finish }}{% endif %}
 [ end state ]
 
 [ state plan ]
-{% for s in plan %}{{ s }}
+{% for s in plan %}{{ loop.index1 }}. {% set step = s %}{% include "components/narrative_engine/plot_step.prompt" %}
 {% endfor %}[ end state ]
 
 [ state need ]
-Step {{ need.step }} needs {{ need.item }} in hand first: {{ need.sketch }}
+Step {{ need.step }} needs {{ need.item }} in hand first: {% set step = need.sketch %}{% include "components/narrative_engine/plot_step.prompt" %}
 [ end state ]
 
 [ question obtain choice ]
 How does `who` get {{ need.item }} for the step in `need`, given the kind of person they are and what the scheme in `aims` is?
 [ criteria ]
-{% for o in options %}{{ o.key }}: {{ o.line }}
+{% for o in options %}{{ o.key }}: {% set step = o.step %}{% include "components/narrative_engine/plot_step.prompt" %}
 {% endfor %}[ end criteria ]
 [ end question ]

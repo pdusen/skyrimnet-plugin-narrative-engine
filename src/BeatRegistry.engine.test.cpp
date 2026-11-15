@@ -57,10 +57,6 @@ namespace
         {
             return name_;
         }
-        std::string Description() const override
-        {
-            return "A fake beat, for the registry's benefit.";
-        }
         BeatPolarity Polarity() const override
         {
             return polarity_;

@@ -92,9 +92,9 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
     {
         Decorators::Register();
 
-        SECTION("should register exactly three decorators")
+        SECTION("should register exactly four decorators")
         {
-            REQUIRE(fake.registerDecoratorCalls == 3);
+            REQUIRE(fake.registerDecoratorCalls == 4);
         }
 
         SECTION("should register them under the names the prompt expects")
@@ -106,6 +106,7 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
             REQUIRE(Registered(fake, "ne_narrative_tension"));
             REQUIRE(Registered(fake, "ne_narrative_phase"));
             REQUIRE(Registered(fake, "ne_plot_awareness"));
+            REQUIRE(Registered(fake, "ne_render_check"));
         }
 
         SECTION("should describe what the value means")
@@ -123,6 +124,13 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
             // for an empty answer, which is the right reading of nobody.
             REQUIRE(ResultOf(fake, "ne_plot_awareness").empty());
         }
+
+        SECTION("should answer nothing for the render check while none is running")
+        {
+            // The check's template tests for the empty answer, and words
+            // nothing when it gets one.
+            REQUIRE(ResultOf(fake, "ne_render_check").empty());
+        }
     }
 
     SECTION("when a name is already taken")
@@ -135,7 +143,7 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
         SECTION("should still attempt every registration")
         {
             Decorators::Register();
-            REQUIRE(fake.registerDecoratorCalls == 3);
+            REQUIRE(fake.registerDecoratorCalls == 4);
         }
     }
 
@@ -149,7 +157,7 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
             // too: they are independent, and half a narrative state in the
             // prompt is worse than none because the template renders around it.
             Decorators::Register();
-            REQUIRE(fake.registerDecoratorCalls == 3);
+            REQUIRE(fake.registerDecoratorCalls == 4);
         }
     }
 }

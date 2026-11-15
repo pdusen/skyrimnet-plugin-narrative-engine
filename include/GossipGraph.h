@@ -138,6 +138,8 @@ namespace NarrativeEngine::GossipGraph
     struct LeftOut
     {
         std::string name;
+        // Why, as a token the plot prompts word: ghost, not_person,
+        // no_location or no_hold.
         std::string reason;
     };
 

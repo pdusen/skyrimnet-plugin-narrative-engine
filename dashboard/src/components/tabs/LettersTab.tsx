@@ -1,3 +1,4 @@
+import { t } from '../../i18n/strings';
 import type { LetterPoolState, LetterTimers } from '../../types';
 import { TimerPanel, TimerRow } from '../TimerPanel';
 import { LetterPoolOverview } from '../LetterPoolOverview';
@@ -19,21 +20,21 @@ export function LettersTab({ pool, timers, nowSeconds }: Props) {
 
     return (
         <div className="tab-content letters-tab">
-            <TimerPanel title="Next up">
-                <TimerRow label="Letter beat cooldown" timer={timers.beat_cooldown} />
+            <TimerPanel title={t('timer.next_up')}>
+                <TimerRow label={t('letters.beat_cooldown')} timer={timers.beat_cooldown} />
                 <TimerRow
-                    label="Senders held back"
+                    label={t('timer.senders_held_back')}
                     timer={timers.sender_cooldowns.soonest}
                     note={
                         timers.sender_cooldowns.count > 0
-                            ? `${timers.sender_cooldowns.count} on cooldown`
-                            : 'none on cooldown'
+                            ? t('timer.on_cooldown', { n: timers.sender_cooldowns.count })
+                            : t('timer.none_on_cooldown')
                     }
                 />
                 {timers.pending_delivery.map(p => (
                     <TimerRow
                         key={p.slot_index}
-                        label={`Slot ${p.slot_index} delivery gives up in`}
+                        label={t('letters.delivery_gives_up', { slot: p.slot_index })}
                         timer={p.timeout}
                     />
                 ))}

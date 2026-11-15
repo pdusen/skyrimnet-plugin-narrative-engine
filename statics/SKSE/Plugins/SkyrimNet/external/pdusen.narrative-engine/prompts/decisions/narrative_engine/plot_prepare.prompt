@@ -5,12 +5,14 @@
    already about the right people, and says which planned step it comes
    just before. The answer is p1 onward.
    Receives: mastermind { name, standing }, bio, ambition, scheme, finish,
-     history [string] (steps already taken, when re-planning), plan
-     [string] (the steps planned so far, numbered, the last being the one
-     that accomplishes the scheme), options [{ key, line }].
+     history [{ step, outcome }] (steps already taken, when re-planning),
+     plan [step] (the steps planned so far, the last being the one that
+     accomplishes the scheme), options [{ key, before, step }] (`before`
+     the number of the planned step it comes just before). Steps are
+     records, worded by plot_step and plot_done.
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
 [ state who ]
-{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {% set standing = mastermind.standing %}{% include "components/narrative_engine/plot_standing.prompt" %}{% endif %}.
 {{ bio.summary }}
 [ end state ]
 
@@ -21,17 +23,17 @@ It is meant to end with this: {{ finish }}{% endif %}
 
 {% if length(history) > 0 %}[ state history ]
 What has already happened:
-{% for s in history %}{{ s }}
+{% for s in history %}{{ loop.index1 }}. {% set done = s %}{% include "components/narrative_engine/plot_done.prompt" %}
 {% endfor %}[ end state ]
 
 {% endif %}[ state plan ]
 The steps planned so far, in order; the last one accomplishes the scheme:
-{% for s in plan %}{{ s }}
+{% for s in plan %}{{ loop.index1 }}. {% set step = s %}{% include "components/narrative_engine/plot_step.prompt" %}
 {% endfor %}[ end state ]
 
 [ question prepare choice ]
 Which of these should `who` have done first, to make a step in `plan` more likely to work? Each choice is done just before the step it names.
 [ criteria ]
-{% for o in options %}{{ o.key }}: {{ o.line }}
+{% for o in options %}{{ o.key }}: Before step {{ o.before }}: {% set step = o.step %}{% include "components/narrative_engine/plot_step.prompt" %}
 {% endfor %}[ end criteria ]
 [ end question ]

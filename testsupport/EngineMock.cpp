@@ -1382,24 +1382,38 @@ namespace NarrativeEngine::Testing
             ActorKeywords()[static_cast<const void*>(actor)].push_back(keyword);
     }
 
-    void EngineMock::AddRelationship(RE::TESNPC* a, RE::TESNPC* b, const char* labelForMale, const char* labelForFemale)
+    RE::BGSAssociationType* EngineMock::AddRelationship(RE::TESNPC* a,
+                                                        RE::TESNPC* b,
+                                                        const char* labelForMale,
+                                                        const char* labelForFemale)
+    {
+        return AddRelationship(a, b, labelForMale, labelForFemale, labelForMale, labelForFemale);
+    }
+
+    RE::BGSAssociationType* EngineMock::AddRelationship(RE::TESNPC* a,
+                                                        RE::TESNPC* b,
+                                                        const char* parentMale,
+                                                        const char* parentFemale,
+                                                        const char* childMale,
+                                                        const char* childFemale)
     {
         if (!a || !b)
-            return;
+            return nullptr;
         auto& pool = Relationships();
 
         auto& assocObject = pool.associations.emplace_back(sizeof(RE::BGSAssociationType) + 0x40, 128);
         WireFormDefaults(assocObject, false);
+        // GetFormEditorID is slot 0x32 on TESForm: the language file words an
+        // association type's labels by its EditorID.
+        assocObject.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* assoc = assocObject.As<RE::BGSAssociationType>();
         assoc->formType = RE::FormType::AssociationType;
-        // Both rows carry the same pair of labels. Which row is read depends on
-        // which side of the record the person being named sits, and a test that
-        // set only one would pass or fail on that detail rather than on the
-        // framing under test.
-        for (auto& row : assoc->associationLabels) {
-            row[RE::BGSAssociationType::Sexes::kMale] = labelForMale;
-            row[RE::BGSAssociationType::Sexes::kFemale] = labelForFemale;
-        }
+        using Members = RE::BGSAssociationType::Members;
+        using Sexes = RE::BGSAssociationType::Sexes;
+        assoc->associationLabels[Members::kParent][Sexes::kMale] = parentMale;
+        assoc->associationLabels[Members::kParent][Sexes::kFemale] = parentFemale;
+        assoc->associationLabels[Members::kChild][Sexes::kMale] = childMale;
+        assoc->associationLabels[Members::kChild][Sexes::kFemale] = childFemale;
 
         auto& object = pool.relationships.emplace_back(sizeof(RE::BGSRelationship) + 0x40, 128);
         WireFormDefaults(object, false);
@@ -1409,6 +1423,7 @@ namespace NarrativeEngine::Testing
         rel->npc2 = b;
         rel->assocType = assoc;
         pool.byPair[{static_cast<const void*>(a), static_cast<const void*>(b)}] = rel;
+        return assoc;
     }
 
     RE::TESObjectCELL* EngineMock::GroundCell()
@@ -3914,3 +3929,35 @@ namespace NarrativeEngine::Testing
         }
     } // namespace
 } // namespace NarrativeEngine::Testing
+
+// ---------------------------------------------------------------------------
+// RE::INISettingCollection
+// ---------------------------------------------------------------------------
+//
+// The game's INI settings are not modelled: there is no collection, so every
+// lookup through it reads as "not set", which is what Localization::Load does
+// with a missing sLanguage. The three functions below are reachable only
+// through a collection, so reaching one means somebody modelled half of it.
+
+RE::INISettingCollection* RE::INISettingCollection::GetSingleton()
+{
+    return nullptr;
+}
+
+RE::Setting* RE::INISettingCollection::GetSetting(std::string_view)
+{
+    std::fprintf(stderr, "[EngineMock] FATAL: INISettingCollection::GetSetting reached with no collection modelled.\n");
+    std::abort();
+}
+
+RE::Setting::Type RE::Setting::GetType() const
+{
+    std::fprintf(stderr, "[EngineMock] FATAL: Setting::GetType reached with no INI settings modelled.\n");
+    std::abort();
+}
+
+const char* RE::Setting::GetString() const
+{
+    std::fprintf(stderr, "[EngineMock] FATAL: Setting::GetString reached with no INI settings modelled.\n");
+    std::abort();
+}

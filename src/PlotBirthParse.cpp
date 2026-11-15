@@ -4,6 +4,7 @@
 #include <LLMTextSanitizer.h>
 #include <PlotStepParse.h>
 #include <PlotVerbs.h>
+#include <TextUtf8.h>
 
 #include <nlohmann/json.hpp>
 
@@ -17,6 +18,10 @@
 // which is the only way to be sure the wrong ones are actually handled.
 namespace NarrativeEngine::PlotBirth
 {
+    using PlotRejection::Code;
+    using PlotRejection::Make;
+    using PlotRejection::Rejection;
+
     namespace
     {
         std::string Trim(std::string text)
@@ -87,28 +92,33 @@ namespace NarrativeEngine::PlotBirth
                       const char* key,
                       std::size_t limit,
                       std::string& out,
-                      std::string& rejection,
+                      Rejection& rejection,
+                      const LanguageTable::Table& table,
                       std::string_view playerName = {})
         {
             const auto it = json.find(key);
             if (it == json.end() || !it->is_string()) {
-                rejection = std::string("response carried no '") + key + "' string";
+                rejection = Make(Code::MissingText, {{"key", key}});
                 return false;
             }
             out = LLMTextSanitizer::Sanitize(it->get<std::string>());
             if (out.empty()) {
-                rejection = std::string("'") + key + "' was empty after sanitizing";
+                rejection = Make(Code::EmptyText, {{"key", key}});
                 return false;
             }
-            if (PlotStepParse::NamesThePlayer(out, playerName)) {
-                rejection = "the '" + std::string{key}
-                            + "' named the player; these plots run among the people of Skyrim and cannot "
-                              "involve the player";
+            if (PlotStepParse::NamesThePlayer(out, playerName, table)) {
+                rejection = Make(Code::NamesPlayer, {{"key", key}});
+                return false;
+            }
+            // Half a name in one alphabet and half in another, as a Russian
+            // answer wrote "Солitude": shown and remembered as written, and a
+            // name no matcher can find.
+            if (const auto mixed = TextUtf8::MixedScriptWord(out); !mixed.empty()) {
+                rejection = Make(Code::MixedScript, {{"key", key}, {"word", std::string{mixed}}});
                 return false;
             }
             if (out.size() > limit) {
-                rejection = std::string("'") + key + "' was " + std::to_string(out.size())
-                            + " characters, over the limit of " + std::to_string(limit);
+                rejection = Make(Code::TooLong, {{"key", key}, {"length", out.size()}, {"limit", limit}});
                 return false;
             }
             return true;
@@ -123,35 +133,41 @@ namespace NarrativeEngine::PlotBirth
             return text;
         }
 
-        // Two schemes as the same line, whatever their case.
+        // Two schemes as the same line, whatever their case, in any script.
         bool SameLine(std::string_view a, std::string_view b)
         {
-            const auto x = AsLine(std::string{a});
-            const auto y = AsLine(std::string{b});
-            return std::ranges::equal(x, y, [](char l, char r) {
-                return std::tolower(static_cast<unsigned char>(l)) == std::tolower(static_cast<unsigned char>(r));
-            });
+            return TextUtf8::EqualsFolded(AsLine(std::string{a}), AsLine(std::string{b}));
         }
     } // namespace
+
+    bool IsCutOff(const std::string& response)
+    {
+        const auto body = EvaluationPipeline::StripMarkdownFences(response);
+        if (body.empty() || body.front() != '{') {
+            return false;
+        }
+        nlohmann::json json;
+        return !ReadObject(response, json);
+    }
 
     CastOutcome ParseCast(const std::string& response, const std::vector<RE::FormID>& shortlist)
     {
         CastOutcome out;
 
         if (shortlist.empty()) {
-            out.rejection = "there was nobody on the shortlist to choose from";
+            out.rejection = Make(Code::NoShortlist);
             return out;
         }
 
         nlohmann::json json;
         if (!ReadObject(response, json)) {
-            out.rejection = "response was not a JSON object";
+            out.rejection = Make(Code::NotJson);
             return out;
         }
 
         const auto it = json.find("choice");
         if (it == json.end()) {
-            out.rejection = "response carried no 'choice'";
+            out.rejection = Make(Code::MissingChoice);
             return out;
         }
 
@@ -166,17 +182,17 @@ namespace NarrativeEngine::PlotBirth
             // has still named the right person.
             const auto named = Trim(it->get<std::string>());
             if (named.empty()) {
-                out.rejection = "'choice' was empty";
+                out.rejection = Make(Code::EmptyChoice);
                 return out;
             }
             if (!ReadFormId(named, chosen)) {
-                out.rejection = "'choice' was '" + named + "', which is not a form id";
+                out.rejection = Make(Code::ChoiceNotFormId, {{"text", named}});
                 return out;
             }
         } else if (it->is_number_unsigned()) {
             chosen = static_cast<RE::FormID>(it->get<std::uint64_t>());
         } else {
-            out.rejection = "'choice' was neither a form id string nor a number";
+            out.rejection = Make(Code::ChoiceWrongType);
             return out;
         }
 
@@ -193,8 +209,7 @@ namespace NarrativeEngine::PlotBirth
                 return out;
             }
         }
-        out.rejection = "'choice' named form 0x" + FormatHex(chosen) + ", which is not one of the "
-                        + std::to_string(shortlist.size()) + " candidates";
+        out.rejection = Make(Code::ChoiceNotListed, {{"form", FormatHex(chosen)}, {"count", shortlist.size()}});
         return out;
     }
 
@@ -202,20 +217,21 @@ namespace NarrativeEngine::PlotBirth
                                   const TextLimits& limits,
                                   std::string_view playerName,
                                   const RoleResolver& resolveRoles,
-                                  const std::vector<std::string>& accomplished)
+                                  const std::vector<std::string>& accomplished,
+                                  const LanguageTable::Table& table)
     {
         AmbitionOutcome out;
 
         nlohmann::json json;
         if (!ReadObject(response, json)) {
-            out.rejection = "response was not a JSON object";
+            out.rejection = Make(Code::NotJson);
             return out;
         }
 
-        if (!ReadText(json, "ambition", limits.maxAmbition, out.ambition, out.rejection, playerName)) {
+        if (!ReadText(json, "ambition", limits.maxAmbition, out.ambition, out.rejection, table, playerName)) {
             return out;
         }
-        if (!ReadText(json, "scheme", limits.maxScheme, out.scheme, out.rejection, playerName)) {
+        if (!ReadText(json, "scheme", limits.maxScheme, out.scheme, out.rejection, table, playerName)) {
             out.ambition.clear();
             return out;
         }
@@ -225,8 +241,7 @@ namespace NarrativeEngine::PlotBirth
         // succeeded was proposed again, word for word, a dozen ticks later.
         for (const auto& done : accomplished) {
             if (SameLine(out.scheme, done)) {
-                out.rejection = "the scheme '" + out.scheme
-                                + "' is one this person has already accomplished; choose a different one";
+                out.rejection = Make(Code::SchemeAccomplished, {{"scheme", out.scheme}});
                 out.ambition.clear();
                 out.scheme.clear();
                 return out;
@@ -237,14 +252,14 @@ namespace NarrativeEngine::PlotBirth
         // Planning puts it last and builds back from it, so a goal the
         // manifest does not have is a plan with nothing to stand on.
         constexpr std::size_t kMaxGoal = 40;
-        if (!ReadText(json, "goal", kMaxGoal, out.goal, out.rejection)) {
+        if (!ReadText(json, "goal", kMaxGoal, out.goal, out.rejection, table)) {
             out.ambition.clear();
             out.scheme.clear();
             return out;
         }
         const auto* goal = PlotVerbs::Find(out.goal);
         if (goal == nullptr) {
-            out.rejection = "the goal '" + out.goal + "' is not one of the kinds of step listed; give one of their ids";
+            out.rejection = Make(Code::GoalUnknown, {{"goal", out.goal}});
             out.ambition.clear();
             out.scheme.clear();
             out.goal.clear();
@@ -253,9 +268,7 @@ namespace NarrativeEngine::PlotBirth
         // Not listed, and for a reason worth telling the retry: what such a
         // step makes or hides is for a step after it.
         if (!goal->finishes) {
-            out.rejection = "the goal '" + out.goal
-                            + "' only prepares for a later step and cannot end a scheme; end it in what that step "
-                              "was for, from the ids listed";
+            out.rejection = Make(Code::GoalNotFinishing, {{"goal", out.goal}});
             out.ambition.clear();
             out.scheme.clear();
             out.goal.clear();
@@ -265,7 +278,7 @@ namespace NarrativeEngine::PlotBirth
         // How the scheme ends: the goal written out as an act, with its
         // people and any item. Planning ranks whoever it names first, so it
         // is held to the same instruction form as the scheme.
-        if (!ReadText(json, "finish", limits.maxScheme, out.finish, out.rejection, playerName)) {
+        if (!ReadText(json, "finish", limits.maxScheme, out.finish, out.rejection, table, playerName)) {
             out.ambition.clear();
             out.scheme.clear();
             out.goal.clear();
@@ -275,8 +288,8 @@ namespace NarrativeEngine::PlotBirth
         // turns up: "spread_rumors about the court historian".
         out.finish = AsLine(PlotVerbs::Plain(out.finish));
 
-        if (!SchemeOpensWithVerb(out.finish)) {
-            out.rejection = "the finish must open with a plain verb, as an instruction: '" + out.finish + "'";
+        if (!SchemeOpensWithVerb(out.finish, table)) {
+            out.rejection = Make(Code::FinishNotVerb, {{"finish", out.finish}});
             out.ambition.clear();
             out.scheme.clear();
             out.goal.clear();
@@ -291,7 +304,7 @@ namespace NarrativeEngine::PlotBirth
         std::vector<PlotModel::SlotValue> named;
         {
             const auto roles = json.find("roles");
-            std::string missing;
+            nlohmann::json missing = nlohmann::json::array();
             for (std::size_t i = 0; i < goal->slotCount; ++i) {
                 const auto& slot = goal->slots[i];
                 std::string text;
@@ -302,29 +315,31 @@ namespace NarrativeEngine::PlotBirth
                     }
                 }
                 if (text.empty()) {
-                    missing += std::format("{}{} ({})", missing.empty() ? "" : ", ", slot.name, slot.says);
+                    missing.push_back(PlotRejection::Role(goal->id, slot.name));
                     continue;
                 }
-                if (PlotStepParse::NamesThePlayer(text, playerName)) {
+                if (PlotStepParse::NamesThePlayer(text, playerName, table)) {
                     missing.clear();
-                    out.rejection = "the role '" + std::string{slot.name}
-                                    + "' named the player; these plots run among the people of Skyrim and cannot "
-                                      "involve the player";
+                    out.rejection = Make(Code::RoleNamesPlayer, {{"role", PlotRejection::Role(goal->id, slot.name)}});
                     break;
                 }
                 named.push_back({std::string{slot.name}, 0, std::move(text)});
             }
-            if (out.rejection.empty() && !missing.empty()) {
-                out.rejection = "'roles' must name every role of '" + out.goal + "'; it did not name: " + missing;
+            if (out.rejection.Empty() && !missing.empty()) {
+                out.rejection = Make(Code::RolesMissing, {{"goal", out.goal}, {"missing", std::move(missing)}});
             }
-            if (out.rejection.empty() && resolveRoles) {
-                if (const auto problem = resolveRoles(*goal, named, out.roles); !problem.empty()) {
-                    out.rejection = "the roles do not fit: " + problem;
+            if (out.rejection.Empty() && resolveRoles) {
+                if (const auto problems = resolveRoles(*goal, named, out.roles); !problems.empty()) {
+                    nlohmann::json list = nlohmann::json::array();
+                    for (const auto& problem : problems) {
+                        list.push_back(problem.ToJson());
+                    }
+                    out.rejection = Make(Code::RolesUnfit, {{"problems", std::move(list)}});
                 }
-            } else if (out.rejection.empty()) {
+            } else if (out.rejection.Empty()) {
                 out.roles = named;
             }
-            if (!out.rejection.empty()) {
+            if (!out.rejection.Empty()) {
                 out.ambition.clear();
                 out.scheme.clear();
                 out.goal.clear();
@@ -347,10 +362,8 @@ namespace NarrativeEngine::PlotBirth
         // dispatch memory the plot writes, so it has to be an instruction.
         // "He is secretly funding an excavation" reached the co-save in an
         // audited run; as a memory it would read "my plan to he is ...".
-        if (!SchemeOpensWithVerb(out.scheme)) {
-            out.rejection = "the scheme must open with a plain verb, as an instruction -- not a name, a pronoun or "
-                            "an article: '"
-                            + out.scheme + "'";
+        if (!SchemeOpensWithVerb(out.scheme, table)) {
+            out.rejection = Make(Code::SchemeNotVerb, {{"scheme", out.scheme}});
             out.ambition.clear();
             out.scheme.clear();
             return out;
@@ -359,8 +372,7 @@ namespace NarrativeEngine::PlotBirth
         if (SameLine(out.ambition, out.scheme)) {
             out.ambition.clear();
             out.scheme.clear();
-            out.rejection = "the scheme is word for word the ambition; a scheme is a step toward the agenda, "
-                            "not a restatement of it";
+            out.rejection = Make(Code::SchemeIsAmbition);
             return out;
         }
 
@@ -368,51 +380,14 @@ namespace NarrativeEngine::PlotBirth
         return out;
     }
 
-    bool SchemeOpensWithVerb(std::string_view scheme)
+    bool SchemeOpensWithVerb(std::string_view scheme, const LanguageTable::Table& table)
     {
-        // The first two words, lower-cased, letters only.
-        std::vector<std::string> words;
-        std::string current;
-        for (const char c : scheme) {
-            if (std::isspace(static_cast<unsigned char>(c))) {
-                if (!current.empty()) {
-                    words.push_back(std::move(current));
-                    current.clear();
-                    if (words.size() == 2) {
-                        break;
-                    }
-                }
-            } else if (std::isalpha(static_cast<unsigned char>(c))) {
-                current.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-            }
-        }
-        if (!current.empty() && words.size() < 2) {
-            words.push_back(std::move(current));
-        }
-        const auto word = [&words](std::size_t index) { return index < words.size() ? words[index] : std::string{}; };
-
-        const auto first = word(0);
-        if (first.empty()) {
+        // Nothing to read as an instruction.
+        if (TextUtf8::Words(scheme).empty()) {
             return false;
         }
-        // Words a scheme cannot open with if it is an instruction.
-        static constexpr std::string_view kNotAVerb[] = {"he",  "she", "they",  "it",   "i",     "we",    "you",
-                                                         "his", "her", "their", "its",  "my",    "our",   "the",
-                                                         "a",   "an",  "this",  "that", "these", "those", "to"};
-        for (const auto bad : kNotAVerb) {
-            if (first == bad) {
-                return false;
-            }
-        }
-        // A name followed by what they mean to do: "Korir plans to ...".
-        static constexpr std::string_view kIntends[] = {
-            "is", "was", "will", "has", "had", "plans", "wants", "means", "intends", "would", "could", "must", "seeks"};
-        const auto second = word(1);
-        for (const auto bad : kIntends) {
-            if (second == bad) {
-                return false;
-            }
-        }
-        return true;
+        const auto& rules = table.Matching();
+        const auto* check = rules.Find("Scheme");
+        return check == nullptr || check->Passes(scheme, rules.options);
     }
 } // namespace NarrativeEngine::PlotBirth

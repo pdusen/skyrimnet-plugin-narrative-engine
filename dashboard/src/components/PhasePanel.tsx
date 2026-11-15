@@ -1,18 +1,19 @@
-import type { DirectorState } from '../types';
+import { label, t } from '../i18n/strings';
+import type { DirectorState, PhaseName } from '../types';
 
 interface Props {
-    phase: string;
+    phase: PhaseName;
     timeInPhaseSeconds: number;
     actionInFlight: DirectorState['action_in_flight'];
 }
 
 function formatDuration(seconds: number): string {
-    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    if (seconds < 60) return t('time.seconds', { s: Math.floor(seconds) });
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
-    if (m < 60) return `${m}m ${s}s`;
+    if (m < 60) return t('time.minutes_seconds', { m, s });
     const h = Math.floor(m / 60);
-    return `${h}h ${m % 60}m`;
+    return t('time.hours_minutes', { h, m: m % 60 });
 }
 
 export function PhasePanel({ phase, timeInPhaseSeconds, actionInFlight }: Props) {
@@ -22,12 +23,15 @@ export function PhasePanel({ phase, timeInPhaseSeconds, actionInFlight }: Props)
         : 0;
     return (
         <section className="panel phase-panel">
-            <h2>Phase</h2>
-            <div className="phase-name">{phase}</div>
-            <div className="phase-time">in phase for {formatDuration(timeInPhaseSeconds)}</div>
+            <h2>{t('director.phase')}</h2>
+            <div className="phase-name">{label('phase.', phase)}</div>
+            <div className="phase-time">{t('director.in_phase_for', { time: formatDuration(timeInPhaseSeconds) })}</div>
             {actionInFlight && (
                 <div className="action-in-flight">
-                    action in flight: {actionInFlight.name} (started {formatDuration(ageSeconds)} ago)
+                    {t('director.action_in_flight', {
+                        beat: label('beat.', actionInFlight.name),
+                        ago: t('time.ago', { time: formatDuration(ageSeconds) }),
+                    })}
                 </div>
             )}
         </section>

@@ -2,7 +2,9 @@
 
 #include <CombatEventLog.h>
 #include <EventLogUtil.h>
+#include <EventText.h>
 #include <JsonUtils.h>
+#include <Localization.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -119,10 +121,10 @@ namespace NarrativeEngine::EventHistoryWriter
                 return out;
             }
 
-            // FormatEventsText synthesizes `text` from `type` + `data`
-            // in-place. We give it `0` as currentGameTimeSeconds so the
-            // "[N ago]" prefix collapses to "just now" — we don't use
-            // that prefix here; we prepend our own in-game timestamp.
+            // DescribeEvents adds each event's `line` record from `type` +
+            // `data` in-place. We give it `0` as currentGameTimeSeconds:
+            // its relative `age` goes unused here, because each history
+            // line carries its own in-game timestamp.
             //
             // The one consumer that keeps book bodies. This file is the
             // durable archive of what actually happened in the session, it
@@ -138,7 +140,7 @@ namespace NarrativeEngine::EventHistoryWriter
                 }
             }
 
-            SkyrimNetEvents::FormatEventsText(parsed, 0.0, SkyrimNetEvents::BookTextPolicy::Render, playerName);
+            SkyrimNetEvents::DescribeEvents(parsed, 0.0, SkyrimNetEvents::BookTextPolicy::Render, playerName);
 
             double newestKept = g_lastSkyrimNetLocalTime;
 
@@ -149,16 +151,8 @@ namespace NarrativeEngine::EventHistoryWriter
                 if (localTime <= g_lastSkyrimNetLocalTime)
                     continue; // already logged in a prior flush
 
-                // The `text` field FormatEventsText emitted has a
-                // "[just now] " prefix baked in from the delta=~0
-                // rendering; strip it for the history line.
-                std::string text = JsonUtils::StringOr(evt, "text");
-                if (!text.empty() && text.front() == '[') {
-                    const auto close = text.find(']');
-                    if (close != std::string::npos && close + 2 <= text.size()) {
-                        text.erase(0, close + 2); // "[...] " prefix (bracket + space)
-                    }
-                }
+                std::string text =
+                    EventText::Body(Localization::English(), evt.value("line", nlohmann::json::object()));
 
                 std::string kind = JsonUtils::StringOr(evt, "type");
                 if (kind.empty()) {

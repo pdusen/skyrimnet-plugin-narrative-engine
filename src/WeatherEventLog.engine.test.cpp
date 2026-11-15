@@ -2,8 +2,10 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
+#include <EventText.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
+#include <ShippedLanguage.h>
 #include <ThreadRole.h>
 
 #include <SKSE/Interfaces.h>
@@ -219,8 +221,8 @@ TEST_CASE("WeatherEventLog only reports changes a player would notice", "[Weathe
             // The rendered sentence is what reaches the model, so the direction
             // of the transition has to survive into the text.
             const auto tail = Tail();
-            const std::string text = tail[0].value("text", "");
-            REQUIRE_FALSE(text.empty());
+            REQUIRE(NarrativeEngine::EventText::Line(NarrativeEngine::Testing::ShippedEnglish(), tail[0])
+                    == "[just now] The rain has stopped.");
             REQUIRE(tail[0].value("ne_kind", "").find("rain") != std::string::npos);
         }
     }

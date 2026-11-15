@@ -57,7 +57,6 @@ namespace NarrativeEngine
     {
     public:
         std::string Name() const override;
-        std::string Description() const override;
         BeatPolarity Polarity() const override;
         bool IsAvailable(const BeatContext& ctx) const override;
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;

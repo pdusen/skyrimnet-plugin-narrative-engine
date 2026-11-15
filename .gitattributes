@@ -37,3 +37,8 @@
 *.esp filter=lfs diff=lfs merge=lfs -text
 *.esm filter=lfs diff=lfs merge=lfs -text
 *.seq filter=lfs diff=lfs merge=lfs -text
+
+# MCM translation tables. The game reads only UTF-16 LE with a BOM and CRLF, so
+# that is what the working tree holds; the repository keeps them as UTF-8, so
+# their diffs are readable.
+statics/Interface/Translations/*.txt text working-tree-encoding=UTF-16LE-BOM eol=crlf

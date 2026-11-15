@@ -3,6 +3,7 @@
 #include <PlotCasting.h>
 #include <PlotMenus.h>
 #include <PlotModel.h>
+#include <PlotRejection.h>
 #include <PlotVerbs.h>
 
 #include <cstddef>
@@ -30,16 +31,31 @@
 // drive it against a fabricated province.
 namespace NarrativeEngine::PlotCandidates
 {
+    // Why somebody is on a list, beside their name: what the model reads of
+    // them, which plot_slot.prompt words. Empty for a place or a thing, whose
+    // name is all there is to say.
+    struct Why
+    {
+        // What they do, from their biography. May be empty.
+        std::string occupation;
+        // How the mastermind knows them, as a PlotMenus::RelationId, or
+        // empty for a stranger.
+        std::string relation;
+        // Where a stranger lives, when that is known.
+        std::string lives;
+        // The scheme, or how it finishes, names them.
+        bool named = false;
+    };
+
     struct Candidate
     {
         // c1, c2, ... in list order: what the decision question offers
         // and what its answer is matched against.
         std::string key;
-        // What filling the slot with this candidate writes into the step.
+        // What filling the slot with this candidate writes into the step,
+        // and the name the model reads.
         PlotModel::SlotValue value;
-        // The one line the model reads: who or what this is, and why it
-        // is on the list.
-        std::string line;
+        Why why;
     };
 
     struct Request
@@ -75,6 +91,10 @@ namespace NarrativeEngine::PlotCandidates
         // the people of the step a preparation or a theft serves, so the
         // bribe before a theft never pays the person being robbed.
         std::unordered_set<RE::FormID> excluded{};
+
+        // Whose rules read the names a text gives: the session's when null.
+        // The language trial gives its own.
+        const LanguageTable::Table* table = nullptr;
     };
 
     struct Limits
@@ -111,9 +131,9 @@ namespace NarrativeEngine::PlotCandidates
     {
         // In the goal's slot order, each naming its form and how it is said.
         std::vector<PlotModel::SlotValue> values;
-        // Empty when every role resolved; otherwise a sentence for each that
-        // did not, joined, for the scheme call's retry to act on.
-        std::string problem;
+        // Empty when every role resolved; otherwise why each that did not
+        // failed, for the scheme call's retry to act on.
+        std::vector<PlotRejection::Rejection> problems;
     };
 
     // Resolve the roles `named` gives a goal -- each a slot's name and the
@@ -142,9 +162,9 @@ namespace NarrativeEngine::PlotCandidates
     // What the scheme call is shown, so a finish can name one.
     [[nodiscard]] std::vector<std::string> MadeExamples(const Request& request, std::size_t perCraft);
 
-    // A person's line on a list: name, what they do, and how the
-    // mastermind knows them or where they live.
-    [[nodiscard]] std::string Describe(const Request& request, const PlotCasting::Member& member);
+    // Why a person is on a list: what they do, and how the mastermind knows
+    // them or where they live.
+    [[nodiscard]] Why Describe(const Request& request, const PlotCasting::Member& member);
 
     // Everybody `text` names. A person is named when a word of their name
     // stands in the text as a whole word -- a trailing 's dropped -- and no
@@ -152,7 +172,8 @@ namespace NarrativeEngine::PlotCandidates
     // Black-Briar, while "Black-Briar", her whole family's, names nobody.
     // Case matters, so "Hulda" is a name and "hulda" is not.
     [[nodiscard]] std::unordered_set<RE::FormID> NamedIn(const PlotCasting::Population& population,
-                                                         std::string_view text);
+                                                         std::string_view text,
+                                                         const LanguageTable::Table& table = Localization::Get());
 
     // The step whose people a later step treats as aware of this one, and
     // how: whether each person slot's awareness fired for the outcome the

@@ -32,7 +32,9 @@ export function App() {
         return <div className="dashboard error">{snap.error}</div>;
     }
     if (!snap.state) {
-        return <div className="dashboard placeholder">Awaiting first Director evaluation…</div>;
+        // The words arrive with the first state, so there are none to
+        // wait in yet.
+        return <div className="dashboard placeholder">…</div>;
     }
 
     const s = snap.state;

@@ -1,8 +1,12 @@
 #include <LetterPool.h>
 
 #include <CourierUtils.h>
+#include <EngineUtils.h>
+#include <LetterComposer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
+#include <NarrativeText.h>
 #include <NPCLetterBeat.h>
 #include <QuestUtils.h>
 #include <Settings.h>
@@ -777,9 +781,11 @@ namespace NarrativeEngine::LetterPool
         //
         // TESObjectBOOK inherits two TESDescription instances — DESC
         // (book body, fieldType 'CSED') and CNAM (item-card tooltip,
-        // fieldType 'MANC'). We only substitute on the body read.
+        // fieldType 'MANC'). The body is the letter's own; the item card
+        // is the language file's, so it reads in the player's language.
 
         constexpr std::uint32_t kFieldType_DESC = 'CSED';
+        constexpr std::uint32_t kFieldType_CNAM = 'MANC';
 
         using GetDescription_t = void (*)(RE::TESDescription*, RE::BSString&, RE::TESForm*, std::uint32_t);
 
@@ -805,6 +811,12 @@ namespace NarrativeEngine::LetterPool
                 // ResetSlotToFreeLocked) precisely so stale REFRs
                 // don't hit this fall-through. Falls through to the
                 // ESP placeholder as a last resort.
+            }
+            if (a_fieldType == kFieldType_CNAM && a_parent && IsManagedForm(a_parent->GetFormID())) {
+                if (const auto card = LetterComposer::ItemCard(Localization::Get()); !card.empty()) {
+                    a_out = card.c_str();
+                    return;
+                }
             }
             g_origGetDescription(self, a_out, a_parent, a_fieldType);
         }
@@ -1298,10 +1310,10 @@ namespace NarrativeEngine::LetterPool
             // resolvable — never an epithet like "the Dragonborn".
             // The actor's actual character name is what belongs in
             // every generated string across this project.
-            const std::string playerName =
-                (playerNameC && *playerNameC != '\0') ? std::string{playerNameC} : std::string{"the recipient"};
-            const auto contentText = std::string{"I wrote and sent a letter to "} + playerName
-                                     + ". The contents were as follows:\n\n" + body;
+            const NarrativeText::Person recipient{(playerNameC && *playerNameC != '\0') ? std::string{playerNameC}
+                                                                                        : std::string{},
+                                                  EngineUtils::SexOf(player ? player->GetActorBase() : nullptr)};
+            const auto contentText = NarrativeText::LetterSent(Localization::Get(), recipient, body);
             // Sender's known location, falling back to the player's
             // location if the sender's location doesn't resolve (e.g.
             // sender is in an unloaded cell with no assigned location).

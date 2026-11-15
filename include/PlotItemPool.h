@@ -46,6 +46,10 @@ namespace NarrativeEngine::PlotItemPool
     [[nodiscard]] std::string_view CategoryId(Category c) noexcept;
     [[nodiscard]] bool ParseCategory(std::string_view id, Category& out) noexcept;
 
+    // Where a language file rewords an item's phrase, by its EditorID:
+    // [Data.Item] TG04GoldenglowDeed = ...
+    inline constexpr std::string_view kDataSection = "Data.Item";
+
     struct Item
     {
         RE::FormID form = 0;
@@ -54,6 +58,9 @@ namespace NarrativeEngine::PlotItemPool
         // "acquire a bottle of Black-Briar mead".
         std::string displayName;
         Category category = Category::Valuable;
+        // The line's EditorID: the key a language file rewords it by. Kept
+        // because the language trial rewords the pool in each table it runs.
+        std::string editorId;
     };
 
     // Load at kDataLoaded, after the data handler is up. Idempotent.

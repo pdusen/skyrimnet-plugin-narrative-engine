@@ -1,0 +1,23 @@
+{# plot_awareness.prompt — what somebody in a plot knows of it, in the second
+   person, for their own prompt. Included by the submodule
+   0300_ne_plot_awareness.prompt with `plot_awareness` set to the
+   ne_plot_awareness decorator's record; include/PlotAwareness.h in the
+   source lists its fields. A mastermind is told their scheme and each step of
+   it, done, under way or still to do; an agent the one errand they were sent
+   on. Each step's work is worded by plot_task. No trailing newline.
+
+   Whitespace: every line inside the step loop ends in a tag whose `-%}` eats
+   the newline, so the only newline a step adds is the one the loop opens
+   with, ahead of its number. #}{% if plot_awareness.role == "mastermind" %}You currently have a plot in motion{% if length(plot_awareness.scheme) > 0 %} to {{ plot_awareness.scheme }}{% endif %}. The plot has the following steps:
+{% for s in plot_awareness.steps %}
+{{ loop.index1 }}. {% set task = s.task %}{% set side = "mastermind" -%}
+    {% if length(s.agent) > 0 %}{% set agent = s.agent %}{% else %}{% set agent = "someone" %}{% endif -%}
+    {% if s.state == "done" -%}
+        {% if s.self %}You set out to {% else %}You sent {{ agent }} to {% endif %}{% include "components/narrative_engine/plot_task.prompt" -%}
+        {% if s.outcome == "succeeded" %}{% if s.self %}, and succeeded.{% else %}, and they succeeded.{% endif -%}
+        {% else if s.outcome == "failed_timeout" %}{% if s.self %}, but ran out of time and had to regroup.{% else %}, but they ran out of time and you had to regroup.{% endif -%}
+        {% else %}, but it went wrong and you had to regroup.{% endif -%}
+    {% else if s.state == "in_progress" -%}
+        {% if s.self %}You are currently trying to {% include "components/narrative_engine/plot_task.prompt" %}.{% else %}You have sent {{ agent }} to {% include "components/narrative_engine/plot_task.prompt" %}. This is currently in progress.{% endif -%}
+    {% else -%}
+        {% if plot_awareness.alone %}You need to {% else %}You need to send someone to {% endif %}{% include "components/narrative_engine/plot_task.prompt" %}.{% endif %}{% endfor %}{% else %}You have been sent by {% if length(plot_awareness.sender) > 0 %}{{ plot_awareness.sender }}{% else %}someone{% endif %} to {% set task = plot_awareness.task %}{% set side = "agent" %}{% include "components/narrative_engine/plot_task.prompt" %}. You're in the process of doing that now.{% endif -%}

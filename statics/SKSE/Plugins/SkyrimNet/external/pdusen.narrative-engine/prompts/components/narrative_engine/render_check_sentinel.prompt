@@ -1,0 +1,3 @@
+{# render_check_sentinel.prompt — reached only through a render_template name
+   narrative_engine_render_check.prompt builds; RenderCheck::kFileSentinel
+   is what it says. #}NE-FILE-4QX7

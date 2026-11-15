@@ -1,5 +1,7 @@
 #include <AmbushBeat.h>
 
+#include <ShippedLanguage.h>
+
 #include <ConfiguredAttackerGroups.h>
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
@@ -263,10 +265,14 @@ TEST_CASE("AmbushBeat says what it is", "[AmbushBeat][engine]")
 
     SECTION("should ask the model for the two things it uses")
     {
-        // The description IS the prompt the picker reads. The group decides
+        // The description, now the beat's own prompt file, IS what the picker reads. The group decides
         // who turns up and the prose is the only in-fiction account of why.
-        REQUIRE(beat.Description().find("attacker_group") != std::string::npos);
-        REQUIRE(beat.Description().find("narration_prose") != std::string::npos);
+        REQUIRE(NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/beats/" + beat.Name())
+                    .find("attacker_group")
+                != std::string::npos);
+        REQUIRE(NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/beats/" + beat.Name())
+                    .find("narration_prose")
+                != std::string::npos);
     }
 }
 

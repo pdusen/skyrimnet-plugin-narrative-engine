@@ -50,7 +50,7 @@ namespace NarrativeEngine::PlotMenus
         }
 
         for (const auto& entry : PlotFactionRoster::Entries()) {
-            g_world.factions.push_back({entry.faction, entry.displayName});
+            g_world.factions.push_back({entry.faction, entry.displayName, entry.id});
         }
 
         g_world.items = PlotItemPool::Items();

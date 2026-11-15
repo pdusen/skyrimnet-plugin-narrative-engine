@@ -36,6 +36,10 @@
 // itself.
 namespace NarrativeEngine::PlotFactionRoster
 {
+    // Where a language file rewords a faction's display name, by the
+    // section's own id: [Data.Faction] college = ...
+    inline constexpr std::string_view kDataSection = "Data.Faction";
+
     enum class RankMethod : std::uint8_t
     {
         // Read the faction rank authored on each NPC. Needs MaxRank.

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include <LanguageTable.h>
 #include <PlotCasting.h>
 #include <PlotItemPool.h>
 #include <PlotRecipes.h>
@@ -68,10 +69,9 @@ namespace NarrativeEngine::PlotMenus
         Count
     };
 
+    // The relation's token, which the prompts word: close_and_colleague,
+    // close, colleague or neighbour.
     [[nodiscard]] std::string_view RelationId(Relation r) noexcept;
-
-    // A short phrase for the prompt, e.g. "a friend and colleague".
-    [[nodiscard]] std::string_view RelationPhrase(Relation r) noexcept;
 
     // How `other` is connected to `boss`, if at all. False when they share
     // nothing the ladder ranks -- no tie, no organisation, not even a hold.
@@ -102,6 +102,9 @@ namespace NarrativeEngine::PlotMenus
     {
         RE::FormID faction = 0;
         std::string name;
+        // The roster section's id: the key a language file rewords the
+        // name by.
+        std::string id;
     };
 
     // What the engine-bound caller supplies. Gathered once per session
@@ -153,6 +156,18 @@ namespace NarrativeEngine::PlotMenus
                               RE::FormID mastermind,
                               const World& world,
                               const Limits& limits);
+
+    // Pure. `world` with its item and faction names as `table` words them,
+    // by the [Data.Item] and [Data.Faction] keys the load reads, and each
+    // name it has no row for left as it was.
+    //
+    // What a language trial's births read instead of the session's world:
+    // each run uses its own table for everything plot birth reads, and the
+    // names were translated once, at load, through the session's. Settlement
+    // names come from the game and stay as it spells them. A recipe keeps the
+    // game's name for what it makes, but is phrased again through `table`,
+    // since its article was the session's.
+    [[nodiscard]] World Translated(const World& world, const LanguageTable::Table& table);
 
     // --- The engine-bound half -------------------------------------------
 

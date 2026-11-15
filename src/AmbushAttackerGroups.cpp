@@ -1,6 +1,7 @@
 #include <AmbushAttackerGroups.h>
 
 #include <EngineUtils.h>
+#include <Localization.h>
 #include <logger.h>
 #include <Region.h>
 #include <Settings.h>
@@ -23,6 +24,10 @@ namespace NarrativeEngine::AmbushAttackerGroups
 {
     namespace
     {
+        // Where a language file rewords a group's display name, by the
+        // section's own id: [Data.AttackerGroup] bandits = ...
+        constexpr std::string_view kDataSection = "Data.AttackerGroup";
+
         constexpr const char* kGroupFilePath = "Data/SKSE/Plugins/NarrativeEngine/AttackerGroups.ini";
         constexpr const char* kSectionPrefix = "Group:";
 
@@ -360,6 +365,10 @@ namespace NarrativeEngine::AmbushAttackerGroups
             // --- Display / flavor ---------------------------------------
             if (const auto vals = ValuesFor(ini, sectionName, "DisplayName"); !vals.empty()) {
                 out.displayName = vals.back();
+            }
+            // A language file may reword it, by the section's own id.
+            if (const auto* text = Localization::Get().DataText(kDataSection, id)) {
+                out.displayName = *text;
             }
             if (const auto vals = ValuesFor(ini, sectionName, "Flavor"); !vals.empty()) {
                 out.flavor = vals.back();
@@ -894,6 +903,19 @@ namespace NarrativeEngine::AmbushAttackerGroups
             std::count_if(g_groups.begin(), g_groups.end(), [](const Group& g) { return g.enabled; }));
 
         const std::size_t total = g_groups.size() + skipped;
+        {
+            std::vector<std::string> ids;
+            for (const auto& group : g_groups) {
+                ids.push_back(group.id);
+            }
+
+            // Overrides that reword nothing: a typo, or a row from a mod that is
+            // not installed.
+            for (const auto& line : Localization::Get().UnmatchedData(kDataSection, ids)) {
+                logger::warn("AttackerGroups: the language file's {} matches no group here", line);
+            }
+        }
+
         logger::info("AttackerGroups: loaded {} of {} groups, {} disabled, {} skipped.",
                      g_groups.size(),
                      total,

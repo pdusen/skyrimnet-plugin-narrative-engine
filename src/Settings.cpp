@@ -339,6 +339,8 @@ namespace NarrativeEngine::Settings
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotMishapChanceBase", dst.plotMishapChanceBase));
             dst.plotRandomSeed = static_cast<int>(ini.GetLongValue("Plots", "iPlotRandomSeed", dst.plotRandomSeed));
 
+            dst.localizationLanguage = ini.GetValue("Localization", "sLanguage", dst.localizationLanguage.c_str());
+
             dst.gossipEnabled = ini.GetBoolValue("Gossip", "bGossipEnabled", dst.gossipEnabled);
             dst.gossipLogEnabled = ini.GetBoolValue("Gossip", "bGossipLogEnabled", dst.gossipLogEnabled);
             dst.gossipTickIntervalSeconds = static_cast<int>(

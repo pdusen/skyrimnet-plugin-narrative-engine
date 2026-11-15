@@ -1,0 +1,12 @@
+An NPC the player knows drops what they were doing and travels to the player's current location to speak in person. Best fit when the intended beat cannot survive being written down and folded into a letter — an urgent warning, an apology that needs eye contact, a confession, a threat delivered face-to-face — or when the sender's own state (grief, anger, love, contrition) demands they show up rather than write. Tone and polarity are driven by the generated content, so this beat can serve either a raising direction (menacing / urgent visits) or a lowering direction (contrite / warm / mournful visits) depending on what the current phase calls for.
+
+Avoid when the player is in a dungeon, lair, jail cell, arena, or other cell where a stranger walking up would be jarring — the beat already gates itself on those. Also avoid when the player has just received a letter or another visit; letting the cadence breathe between social beats reads more naturally.
+
+Prefer `npc_letter` when the beat could plausibly land on paper and reach the player at the courier's schedule. Prefer `npc_visit` when the sender needs to see the player's reaction, when the information is dangerous to write down, or when the situation is urgent and needs an answer now.
+
+Parameters:
+  - `sender_npc_form_id` (REQUIRED, string): hex FormID of ONE entry from the visit senders listed with this action (e.g. `"0xA2C8E"`).
+  - `motivating_memory` (REQUIRED, integer): the number of the ONE memory in that sender's list that gives them their reason to come now. The visit is built from that memory, so pick the one that carries the topic you intend.
+  - `urgency_hint` (optional, string): `low` / `medium` / `high`. Defaults to `medium`. One input among several to the brief-composition prompt; not a hard directive.
+
+Do NOT include other parameter fields — briefing, mood, and tags are decided by the beat's own compose LLM call. Extra fields will be silently ignored.

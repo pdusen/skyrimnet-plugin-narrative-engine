@@ -110,14 +110,43 @@ output — semantic search queries, memory text we write via
 string is going to end up in front of either an LLM or the player, the
 player's actual name belongs there, not a generic title.
 
-The one place this rule doesn't apply is action / module descriptions
-written as C++ string constants (e.g. `IAction::Description`) that get
-embedded into a prompt as a raw JSON value. Inja doesn't re-render
-nested template syntax inside string values by default, so
-`{{ player.name }}` written inside a C++ literal would print
-literally as those characters. In those cases, use neutral phrasing
-("the player", "the player character") and let SkyrimNet-rendered
-context elsewhere in the prompt carry the actual name.
+The one place this rule doesn't apply is text written as a C++ string
+constant and embedded into a prompt as a raw JSON value. Inja doesn't
+re-render nested template syntax inside string values by default, so
+`{{ player.name }}` written inside a C++ literal would print literally
+as those characters. In those cases, use neutral phrasing ("the player",
+"the player character") and let SkyrimNet-rendered context elsewhere in
+the prompt carry the actual name.
+
+Beat descriptions used to be such constants (`IBeat::Description`). Since
+Phase 18 they are prompt files of their own,
+`prompts/components/narrative_engine/beats/<beat id>.prompt`, which
+`narrative_engine_action_select` renders by name, so the rule applies to
+them like any other prompt. They still say "the player" only because the
+move kept their words unchanged.
+
+A file rendered through `render_template` keeps its trailing newline in
+the output, which Inja's `{%-` does not remove (it strips only the spaces
+on its own line). Plan for one blank line after an included file rather
+than fighting the template engine for it. The other way round, `-%}` eats
+every space and newline after it, so a file ending in `{% endfor -%}`
+leaves no trailing newline at all.
+
+`render_template` passes no arguments: the file renders against the
+calling prompt's whole context and reads what it needs by name. That is
+how `components/narrative_engine/event_timeline.prompt` serves both the
+Director prompts: each passes its timeline as `recent_events`, and the
+component words every entry of it.
+
+Since Phase 18 the timeline carries no sentences. Each `recent_events`
+entry holds a `line` record — a `kind` and that kind's fields — and an
+`age` such as `{"value": 5, "unit": "minute"}`; memory rows in the sender
+lists carry the same `age`. The prompts word them, and the dashboard words
+the same records from the language file. The kinds, their fields and the
+age units are listed in [`include/EventText.h`](../include/EventText.h).
+Guard a field that only some kinds carry with an `if` on the kind rather
+than `kind == "x" and field`: Inja releases before 3.5 may evaluate both
+sides of an `and`, and reading a missing field fails the whole render.
 
 Where to source the name from C++ when you need it in a search query
 or memory write: `RE::PlayerCharacter::GetSingleton()->GetDisplayFullName()`,

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <LanguageTable.h>
+#include <Localization.h>
+
 #include <string_view>
 
 // PlotStepParse — the one check every plot response parser makes on the
@@ -15,13 +18,15 @@ namespace NarrativeEngine::PlotStepParse
     //
     // By title: "Dragonborn" is what a model reaches for when it means the
     // player, and it is the one title no NPC in Skyrim wears -- Miraak is
-    // the first Dragonborn and is still called Miraak. Whole-word and
-    // case-insensitive, so "dragonborn" and "Dragonborn's" both count and
-    // "Dragonborne" does not.
+    // the first Dragonborn and is still called Miraak. The language file's
+    // [Matching] PlayerTitle check says the title in each language, so in
+    // English "dragonborn" and "Dragonborn's" both count and "Dragonborne"
+    // does not.
     //
-    // And by name: any word of `playerName` three letters or longer,
-    // whole-word and with its case, so "Varian" and "Varian's" count and
-    // "variance" does not. NPCs' memories call the player by their
+    // And by name: any word of `playerName` three characters or longer,
+    // whole and with its case, or carrying one of [Matching] Name.Suffixes,
+    // so in English "Varian" and "Varian's" count and "variance" does not.
+    // In a language written without spaces, anywhere in the text. NPCs' memories call the player by their
     // character's name, and a scheme written from those memories named
     // "Varian" -- the player, made Arch-Mage in that save -- with nothing to
     // say Varian was not somebody the simulation could reach.
@@ -29,5 +34,7 @@ namespace NarrativeEngine::PlotStepParse
     // A plot that turns on the player cannot run: the simulation has
     // nobody to point it at. The ambition prompt forbids it; this refuses
     // the answer that does it anyway.
-    [[nodiscard]] bool NamesThePlayer(std::string_view text, std::string_view playerName = {});
+    [[nodiscard]] bool NamesThePlayer(std::string_view text,
+                                      std::string_view playerName = {},
+                                      const LanguageTable::Table& table = Localization::Get());
 } // namespace NarrativeEngine::PlotStepParse

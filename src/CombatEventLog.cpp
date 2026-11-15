@@ -2,6 +2,8 @@
 
 #include <EditorIds.h>
 #include <EventLogUtil.h>
+#include <EventText.h>
+#include <Localization.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetEvents.h>
@@ -20,7 +22,7 @@ namespace NarrativeEngine::CombatEventLog
 {
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        constexpr std::uint32_t kRecordVersion = 2;
 
         // Storage ring buffer cap. Overridable via Settings if the user adds
         // [CombatEvents] iMaxStored to NarrativeEngine.ini.
@@ -58,12 +60,24 @@ namespace NarrativeEngine::CombatEventLog
 
         struct InternalEvent
         {
+            // What dealt a hit: an actor, or one of the environment's
+            // sources. The co-save keeps this, not the words for it.
+            enum class Source : std::uint8_t
+            {
+                Actor,
+                Poison,
+                SpellTrap,
+                Trap,
+                Activator, // a named activator: `actorName` is its name
+                Unknown,
+            };
+
             Kind kind = Kind::Hit;
-            double localTime = 0.0;        // Unix-epoch seconds
-            double gameTime = 0.0;         // SkyrimNet-compatible time-of-day seconds
-            std::string actorName;         // for Hit: damage-source label (may be empty for bare fallback)
-            std::string targetName;        // unused for combat_start/end, collapse, regain_footing
-            bool actorIsNamedActor = true; // false for environmental hits (poison, traps, ...)
+            double localTime = 0.0; // Unix-epoch seconds
+            double gameTime = 0.0;  // SkyrimNet-compatible time-of-day seconds
+            std::string actorName;  // the actor; for a Hit from an activator, its name
+            std::string targetName; // unused for combat_start/end, collapse, regain_footing
+            Source source = Source::Actor;
         };
 
         std::mutex g_mutex;
@@ -235,12 +249,12 @@ namespace NarrativeEngine::CombatEventLog
         }
 
         // Resolve a damage-source label for a hit event. Returns:
-        //   { label, isNamedActor }
+        //   { label, source }
         // where label is "" only in the bare-fallback case.
         struct SourceLabel
         {
             std::string label;
-            bool isNamedActor = false;
+            InternalEvent::Source source = InternalEvent::Source::Unknown;
         };
 
         SourceLabel ResolveHitSource(const RE::TESHitEvent& evt)
@@ -248,7 +262,7 @@ namespace NarrativeEngine::CombatEventLog
             // 1. Named actor cause.
             if (evt.cause) {
                 if (auto name = ActorDisplayName(evt.cause.get()); !name.empty()) {
-                    return {std::move(name), true};
+                    return {std::move(name), InternalEvent::Source::Actor};
                 }
             }
 
@@ -259,28 +273,28 @@ namespace NarrativeEngine::CombatEventLog
                 if (auto* form = RE::TESForm::LookupByID(evt.source)) {
                     if (auto* magic = form->As<RE::MagicItem>()) {
                         if (MagicItemLooksLikePoison(magic)) {
-                            return {"poison", false};
+                            return {{}, InternalEvent::Source::Poison};
                         }
-                        return {"a spell trap", false};
+                        return {{}, InternalEvent::Source::SpellTrap};
                     }
                     if (auto* acti = form->As<RE::TESObjectACTI>()) {
                         if (const char* n = acti->GetFullName(); n && *n) {
-                            return {LowercaseActivatorLabel(n), false};
+                            return {n, InternalEvent::Source::Activator};
                         }
-                        return {"a trap", false};
+                        return {{}, InternalEvent::Source::Trap};
                     }
                     // Weapon / explosion / etc. with no living wielder —
                     // typical of dart / swinging-blade / pressure-plate
                     // traps. The cause is null because it's the trap firing,
                     // not an actor.
                     if (form->As<RE::TESObjectWEAP>() || form->As<RE::BGSExplosion>()) {
-                        return {"a trap", false};
+                        return {{}, InternalEvent::Source::Trap};
                     }
                 }
             }
 
             // 3. Total fallback.
-            return {{}, false};
+            return {{}, InternalEvent::Source::Unknown};
         }
 
         // ----------- storage helpers ------------------------------------
@@ -313,42 +327,48 @@ namespace NarrativeEngine::CombatEventLog
             e.localTime = EventLogUtil::NowUnixSeconds();
             e.gameTime = EventLogUtil::NowGameTimeSeconds();
             e.actorName = name;
-            e.actorIsNamedActor = true;
+            e.source = InternalEvent::Source::Actor;
             PushLocked(std::move(e));
         }
 
-        // ----------- rendered text --------------------------------------
+        // ----------- timeline records -----------------------------------
 
-        // Body-only rendering — same output as RenderText but without
-        // the "[N ago]" prefix. Used by the history-writer drain path,
-        // which prepends an absolute in-game timestamp instead.
-        std::string RenderBody(const InternalEvent& e)
+        // The token for what dealt a hit. The co-save keeps the Source; the
+        // record says it in a word EventText and the prompts both read.
+        const char* SourceToken(InternalEvent::Source source)
         {
-            switch (e.kind) {
-            case Kind::CombatStart:
-                return e.actorName + " enters combat";
-            case Kind::CombatEnd:
-                return e.actorName + " leaves combat";
-            case Kind::Hit:
-                if (e.actorIsNamedActor) {
-                    return e.actorName + " strikes " + e.targetName;
-                }
-                if (!e.actorName.empty()) {
-                    return e.targetName + " took damage from " + e.actorName;
-                }
-                return e.targetName + " took damage";
-            case Kind::Collapse:
-                return e.actorName + " collapses";
-            case Kind::RegainFooting:
-                return e.actorName + " regains their footing";
+            switch (source) {
+            case InternalEvent::Source::Actor:
+                return "actor";
+            case InternalEvent::Source::Poison:
+                return "poison";
+            case InternalEvent::Source::SpellTrap:
+                return "spell_trap";
+            case InternalEvent::Source::Trap:
+                return "trap";
+            case InternalEvent::Source::Activator:
+                return "activator";
+            case InternalEvent::Source::Unknown:
+                break;
             }
-            return {};
+            return "unknown";
         }
 
-        std::string RenderText(const InternalEvent& e, double currentGameTimeSeconds)
+        // The event's `line` record (see EventText.h). A hit names its
+        // attacker, or the activator that dealt it, lowercased as it reads
+        // inside a sentence; the other sources name no one.
+        nlohmann::json LineOf(const InternalEvent& e)
         {
-            const double delta = currentGameTimeSeconds - e.gameTime;
-            return "[" + SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + RenderBody(e);
+            if (e.kind != Kind::Hit) {
+                return {{"kind", KindName(e.kind)}, {"actor", e.actorName}};
+            }
+            std::string actor;
+            if (e.source == InternalEvent::Source::Actor) {
+                actor = e.actorName;
+            } else if (e.source == InternalEvent::Source::Activator) {
+                actor = LowercaseActivatorLabel(e.actorName);
+            }
+            return {{"kind", "hit"}, {"actor", actor}, {"target", e.targetName}, {"source", SourceToken(e.source)}};
         }
 
         // ----------- sinks ----------------------------------------------
@@ -532,9 +552,9 @@ namespace NarrativeEngine::CombatEventLog
                 e.kind = Kind::Hit;
                 e.localTime = EventLogUtil::NowUnixSeconds();
                 e.gameTime = EventLogUtil::NowGameTimeSeconds();
-                e.actorName = src.label; // may be empty (bare fallback)
+                e.actorName = src.label;
                 e.targetName = std::move(targetName);
-                e.actorIsNamedActor = src.isNamedActor;
+                e.source = src.source;
 
                 {
                     std::scoped_lock lock(g_mutex);
@@ -569,7 +589,7 @@ namespace NarrativeEngine::CombatEventLog
                 e.localTime = EventLogUtil::NowUnixSeconds();
                 e.gameTime = EventLogUtil::NowGameTimeSeconds();
                 e.actorName = name;
-                e.actorIsNamedActor = true;
+                e.source = InternalEvent::Source::Actor;
 
                 {
                     std::scoped_lock lock(g_mutex);
@@ -663,7 +683,7 @@ namespace NarrativeEngine::CombatEventLog
             e.localTime = EventLogUtil::NowUnixSeconds();
             e.gameTime = EventLogUtil::NowGameTimeSeconds();
             e.actorName = snap.playerDisplayName;
-            e.actorIsNamedActor = true;
+            e.source = InternalEvent::Source::Actor;
 
             if (snap.playerInCombat) {
                 g_currentEncounterStartRealTime = e.localTime;
@@ -790,10 +810,11 @@ namespace NarrativeEngine::CombatEventLog
             j["ne_kind"] = KindName(e.kind);
             j["localTime"] = e.localTime;
             j["gameTime"] = e.gameTime;
-            j["originatingActorName"] = e.actorName;
+            j["originatingActorName"] = e.source == InternalEvent::Source::Actor ? e.actorName : std::string{};
             j["targetActorName"] = e.targetName;
-            j["ne_actor_is_named"] = e.actorIsNamedActor;
-            j["text"] = RenderText(e, currentGameTimeSeconds);
+            const double delta = currentGameTimeSeconds - e.gameTime;
+            j["age"] = SkyrimNetEvents::RelativeGameTime(delta < 0.0 ? 0.0 : delta);
+            j["line"] = LineOf(e);
             arr.push_back(std::move(j));
         }
         return arr;
@@ -874,7 +895,7 @@ namespace NarrativeEngine::CombatEventLog
         intfc->WriteRecordData(count);
         for (const auto& e : snapshot) {
             const auto kindByte = static_cast<std::uint8_t>(e.kind);
-            const auto namedByte = static_cast<std::uint8_t>(e.actorIsNamedActor ? 1 : 0);
+            const auto namedByte = static_cast<std::uint8_t>(e.source);
             intfc->WriteRecordData(kindByte);
             intfc->WriteRecordData(e.localTime);
             intfc->WriteRecordData(e.gameTime);
@@ -928,7 +949,9 @@ namespace NarrativeEngine::CombatEventLog
                 continue;
             }
             e.kind = static_cast<Kind>(kindByte);
-            e.actorIsNamedActor = (namedByte != 0);
+            e.source = namedByte <= static_cast<std::uint8_t>(InternalEvent::Source::Unknown)
+                           ? static_cast<InternalEvent::Source>(namedByte)
+                           : InternalEvent::Source::Unknown;
             loaded.push_back(std::move(e));
         }
 
@@ -980,7 +1003,7 @@ namespace NarrativeEngine::CombatEventLog
             h.localTime = item.event.localTime;
             h.inGameTimestamp = item.inGameTimestamp;
             h.sourceKind = std::string("internal/combat_event/") + KindName(item.event.kind);
-            h.body = RenderBody(item.event);
+            h.body = EventText::Body(Localization::English(), LineOf(item.event));
             out.push_back(std::move(h));
         }
         return out;

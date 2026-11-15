@@ -1,5 +1,7 @@
 #include <GossipContent.h>
 
+#include <EditorIds.h>
+#include <EngineUtils.h>
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
@@ -10,7 +12,10 @@
 #include <GossipThread.h>
 #include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
+#include <NarrativeText.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 
@@ -87,15 +92,35 @@ namespace NarrativeEngine::GossipContent
             if (!rel || !rel->assocType) {
                 return tie;
             }
-            // associationLabels[Members][Sexes]. Which row applies depends on
-            // which side of the relationship the LISTENER sits — the label
-            // is what the teller calls them.
+            // associationLabels[Members][Sexes]: the parent row names the
+            // record's first NPC ("Father", "Mother"), the child row its
+            // second ("Son", "Daughter"), each by their own sex. The memory
+            // is the listener's -- "my sister Hulda told me" -- so the word
+            // is the TELLER's: their side of the record, their sex.
+            const bool parent = rel->npc1 == na;
+            const bool female = na->GetSex() == RE::SEX::kFemale;
             const auto member =
-                (rel->npc1 == nb) ? RE::BGSAssociationType::Members::kParent : RE::BGSAssociationType::Members::kChild;
-            const auto sex = (nb->GetSex() == RE::SEX::kFemale) ? RE::BGSAssociationType::Sexes::kFemale
-                                                                : RE::BGSAssociationType::Sexes::kMale;
+                parent ? RE::BGSAssociationType::Members::kParent : RE::BGSAssociationType::Members::kChild;
+            const auto sex = female ? RE::BGSAssociationType::Sexes::kFemale : RE::BGSAssociationType::Sexes::kMale;
             if (const auto& label = rel->assocType->associationLabels[member][sex]; !label.empty()) {
                 tie.kinship = label.c_str();
+            }
+            // The record's words are plain English strings, never localized,
+            // so the language file words them: [Data.Kin], by the association
+            // type's EditorID, side and sex. Some languages also word a tie by
+            // who speaks of it -- a father-in-law is a woman's gonggong and a
+            // man's yuefu in Chinese -- so a row may be refined by the
+            // listener's sex, and that one is tried first. A type no row
+            // names, a modded one say, keeps its record's word.
+            if (const char* id = EditorIds::Of(rel->assocType); *id != '\0') {
+                const auto key = std::format("{}.{}.{}", id, parent ? "parent" : "child", female ? "female" : "male");
+                const auto refined = key + (nb->GetSex() == RE::SEX::kFemale ? ".listener_female" : ".listener_male");
+                const auto& table = Localization::Get();
+                if (const auto* text = table.DataText("Data.Kin", refined)) {
+                    tie.kinship = *text;
+                } else if (const auto* plain = table.DataText("Data.Kin", key)) {
+                    tie.kinship = *plain;
+                }
             }
             return tie;
         }
@@ -131,14 +156,12 @@ namespace NarrativeEngine::GossipContent
         // Computed here rather than in the template because the shape is
         // arithmetic over band_count, and this project has lost two test
         // runs to Inja constructs that looked fine and did not render.
-        std::string BandLengthSpec(int index)
+        // How many sentences band `index` runs to: {lo, hi}, shorter with each
+        // band. gossip_seed words it, "4 to 6 sentences", or "no more than 2"
+        // once `lo` reaches nothing.
+        nlohmann::json BandLength(int index)
         {
-            const int lo = std::max(0, 4 - index);
-            const int hi = std::max(2, 6 - index);
-            if (lo == 0) {
-                return "no more than 2 sentences";
-            }
-            return std::format("{} to {} sentences", lo, hi);
+            return {{"lo", std::max(0, 4 - index)}, {"hi", std::max(2, 6 - index)}};
         }
 
         std::string HoldName(RE::FormID npc)
@@ -199,6 +222,7 @@ namespace NarrativeEngine::GossipContent
 
             nlohmann::json ctx;
             ctx["band_count"] = bandCount;
+            PromptLanguage::Add(ctx, {"bands"}, Localization::Get());
             ctx["source_text"] = c.text;
             ctx["source_owner"] = NameOf(owner);
             ctx["source_location"] = c.locationName;
@@ -211,7 +235,7 @@ namespace NarrativeEngine::GossipContent
             for (int i = 0; i < bandCount; ++i) {
                 nlohmann::json entry = nlohmann::json::object();
                 entry["index"] = i;
-                entry["length"] = BandLengthSpec(i);
+                entry["length"] = BandLength(i);
                 bandSpecs.push_back(std::move(entry));
             }
             ctx["band_specs"] = std::move(bandSpecs);
@@ -520,7 +544,7 @@ namespace NarrativeEngine::GossipContent
     std::string ComposeHeard(const std::string& bandText, RE::FormID teller, RE::FormID listener)
     {
         const auto tie = DescribeTie(teller, listener);
-        const auto tellerName = NameOf(teller);
+        const NarrativeText::Person tellerPerson{GossipGraph::NpcName(teller), EngineUtils::SexOf(teller)};
 
         // How the listener will remember hearing it. The last row is the
         // common case by a wide margin, and that is fine — it is genuinely
@@ -534,35 +558,28 @@ namespace NarrativeEngine::GossipContent
         // sentence on, and did so in the logs even at one sentence,
         // because the model returns a capitalised sentence rather than a
         // clause. A colon takes any number of sentences without caring.
-        std::string heard;
+        auto how = NarrativeText::Heard::Rumor;
+        std::string hold;
         if (!tie.kinship.empty() && !tie.sameHold) {
-            const auto where = HoldName(teller);
-            heard =
-                std::format("My {} came from {} with news: {}", tie.kinship, where.empty() ? "away" : where, bandText);
+            how = NarrativeText::Heard::KinFromAway;
+            hold = HoldName(teller);
         } else if (!tie.kinship.empty()) {
-            heard = std::format("My {} {} told me this: {}", tie.kinship, tellerName, bandText);
+            how = NarrativeText::Heard::Kin;
         } else if (tie.sameHousehold) {
-            heard = std::format("{} mentioned this over supper: {}", tellerName, bandText);
+            how = NarrativeText::Heard::Household;
         } else if (tie.sameSettlement) {
-            heard = std::format("{} told me this: {}", tellerName, bandText);
-        } else {
-            heard = std::format("I heard a rumor going round: {}", bandText);
+            how = NarrativeText::Heard::Settlement;
         }
-
-        return heard;
+        return NarrativeText::HeardIt(Localization::Get(), how, tellerPerson, tie.kinship, hold, bandText);
     }
 
     std::string ComposeTold(const std::string& bandText, const std::vector<RE::FormID>& listeners)
     {
-        // "B", "B and C", "B, C and D". Oxford comma deliberately omitted:
-        // these are spoken-voice memories, not prose.
-        std::string who;
-        for (std::size_t i = 0; i < listeners.size(); ++i) {
-            if (i > 0) {
-                who += (i + 1 == listeners.size()) ? " and " : ", ";
-            }
-            who += NameOf(listeners[i]);
+        std::vector<NarrativeText::Person> who;
+        who.reserve(listeners.size());
+        for (const auto listener : listeners) {
+            who.push_back({GossipGraph::NpcName(listener), EngineUtils::SexOf(listener)});
         }
-        return std::format("I told {} this: {}", who, bandText);
+        return NarrativeText::ToldIt(Localization::Get(), who, bandText);
     }
 } // namespace NarrativeEngine::GossipContent

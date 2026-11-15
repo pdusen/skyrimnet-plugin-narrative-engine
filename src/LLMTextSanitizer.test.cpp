@@ -209,6 +209,17 @@ TEST_CASE("LLMTextSanitizer::Sanitize", "[LLMTextSanitizer][Sanitize]")
         }
     }
 
+    SECTION("when the response is Russian written with yo")
+    {
+        // "неё" and "Ёлка": the game's Cyrillic font set has no ё.
+        input = Wrap("\xD0\xBD\xD0\xB5\xD1\x91 \xD0\x81\xD0\xBB\xD0\xBA\xD0\xB0");
+
+        SECTION("should write it with ye, as the game's own Russian does")
+        {
+            REQUIRE(Sanitize(input) == Wrap("\xD0\xBD\xD0\xB5\xD0\xB5 \xD0\x95\xD0\xBB\xD0\xBA\xD0\xB0"));
+        }
+    }
+
     SECTION("when the response contains invisible formatting characters")
     {
         input = Wrap(std::string{kZeroWidthSpace} + "hidden" + std::string{kByteOrderMark});

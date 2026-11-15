@@ -1,0 +1,23 @@
+$NE_About	關於
+$NE_Author	作者
+$NE_Description	說明
+$NE_DescriptionText	SkyrimNet 的敘事導演
+$NE_Controls	控制
+$NE_DashboardHotkey	儀表板快捷鍵
+$NE_DashboardHotkey_Help	按下一個鍵進行綁定。若要求啟動時必須按住輔助鍵，請使用下方的「需要 Shift」、「需要 Ctrl」、「需要 Alt」開關。
+$NE_RequireShift	需要 Shift
+$NE_RequireCtrl	需要 Ctrl
+$NE_RequireAlt	需要 Alt
+$NE_LanguageHeader	語言
+$NE_Language	語言
+$NE_Language_Help	NarrativeEngine 書寫所用的語言：信件、記憶、傳言與儀表板。「自動」會跟隨遊戲本身的語言。下次啟動遊戲時生效。
+$NE_Language_Auto	自動
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski
+$NE_Language_russian	Русский
+$NE_Language_japanese	日本語
+$NE_Language_chinese	中文

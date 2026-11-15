@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+
+import { t } from '../i18n/strings';
 import type { MaybeTimer, TimerClock } from '../types';
 
 // Shared rendering for the per-tab timing readouts.
@@ -18,42 +20,32 @@ import type { MaybeTimer, TimerClock } from '../types';
 // paused, so three of the four clocks cannot advance while it is open; see
 // the TimersState comment in types.ts.
 
-const CLOCK_LABEL: Record<TimerClock, string> = {
-    wall_clock: 'real',
-    unpaused_real: 'unpaused',
-    active_play_real: 'active play',
-    game_time: 'game time',
-};
-
-const CLOCK_TITLE: Record<TimerClock, string> = {
-    wall_clock: 'Wall-clock time. Runs through pause, combat, dialogue and menus.',
-    unpaused_real: 'Real time while unpaused. Frozen whenever the game is paused — including now.',
-    active_play_real:
-        'Real time during active play only. Frozen while paused, in combat, and in dialogue — including now.',
-    game_time: 'In-world time. Frozen while the game is paused — including now.',
-};
+// Each clock is labelled by its `clock.<id>` string and explained by its
+// `clock.<id>.title` one.
+const clockLabel = (clock: TimerClock): string => t(`clock.${clock}`);
+const clockTitle = (clock: TimerClock): string => t(`clock.${clock}.title`);
 
 function formatSeconds(seconds: number): string {
-    if (seconds < 1) return 'now';
-    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    if (seconds < 1) return t('time.now');
+    if (seconds < 60) return t('time.seconds', { s: Math.floor(seconds) });
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
-    if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    if (m < 60) return s > 0 ? t('time.minutes_seconds', { m, s }) : t('time.minutes', { m });
     const h = Math.floor(m / 60);
-    return `${h}h ${m % 60}m`;
+    return t('time.hours_minutes', { h, m: m % 60 });
 }
 
 function formatGameHours(hours: number): string {
-    if (hours < 1 / 60) return 'now';
-    if (hours < 1) return `${Math.round(hours * 60)}m`;
+    if (hours < 1 / 60) return t('time.now');
+    if (hours < 1) return t('time.minutes', { m: Math.round(hours * 60) });
     if (hours < 24) {
         const h = Math.floor(hours);
         const m = Math.round((hours - h) * 60);
-        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+        return m > 0 ? t('time.hours_minutes', { h, m }) : t('time.hours', { h });
     }
     const d = Math.floor(hours / 24);
     const h = Math.round(hours % 24);
-    return h > 0 ? `${d}d ${h}h` : `${d}d`;
+    return h > 0 ? t('time.days_hours', { d, h }) : t('time.days', { d });
 }
 
 export function formatTimer(timer: MaybeTimer): string {
@@ -64,13 +56,17 @@ export function formatTimer(timer: MaybeTimer): string {
 export function TimerValue({ timer }: { timer: MaybeTimer }): ReactNode {
     if (!timer) {
         // Deliberately not "0s". See the header note.
-        return <span className="timer-value timer-inactive" title="Not scheduled, or configured off">—</span>;
+        return (
+            <span className="timer-value timer-inactive" title={t('timer.inactive')}>
+                —
+            </span>
+        );
     }
     return (
         <span className="timer-value">
             {formatTimer(timer)}
-            <span className="timer-clock" title={CLOCK_TITLE[timer.clock]}>
-                {CLOCK_LABEL[timer.clock]}
+            <span className="timer-clock" title={clockTitle(timer.clock)}>
+                {clockLabel(timer.clock)}
             </span>
         </span>
     );
@@ -94,7 +90,7 @@ export function TimerPanel({ title, children }: { title: string; children: React
         <section className="panel timer-panel">
             <h2>{title}</h2>
             {children}
-            <div className="timer-asof">as of when the dashboard was opened — the game is paused while it is</div>
+            <div className="timer-asof">{t('timer.as_of')}</div>
         </section>
     );
 }

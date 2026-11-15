@@ -78,13 +78,10 @@ namespace NarrativeEngine::WeatherEventLog
     // Returns a JSON array of currently-retained events shaped like
     // SkyrimNet events:
     //   { type, ne_kind, localTime, gameTime, originatingActorName,
-    //     targetActorName, text }
-    // Oldest-first. `text` is pre-rendered with the same "[N ago]"
-    // relative-game-time prefix FormatEventsText produces so the merger
-    // can interleave with SkyrimNet events transparently.
-    //
-    // Step 3 ships this as an empty-array stub; Step 4 fills in the
-    // rendering vocabulary.
+    //     targetActorName, age, line }
+    // Oldest-first. `age` and `line` are the same records DescribeEvents
+    // gives SkyrimNet's events (EventText.h lists them), so the merger
+    // can interleave the two transparently.
     nlohmann::json GetRenderedTail(double currentGameTimeSeconds);
 
     // SKSE co-save persistence. OnSave prunes-then-writes so on-disk

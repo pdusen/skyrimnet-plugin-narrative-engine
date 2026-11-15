@@ -31,16 +31,18 @@ namespace NarrativeEngine::DecisionProbe
     inline constexpr const char* kTemplate = "narrative_engine/probe";
     inline constexpr const char* kQuestion = "pick";
 
-    // The choice for a question its sentence does not answer.
+    // The choice for a question its sentence does not answer, as Choices
+    // lists it and the log reports it. The prompt is sent a flag for it, and
+    // words it itself.
     inline constexpr std::string_view kNotNamed = "(not named in the sentence)";
 
     // The longest sentence a round may use.
     inline constexpr std::size_t kMaxSentence = 120;
 
+    // What a question asks is probe.prompt's to say, by its round and its id.
     struct Question
     {
         std::string id;
-        std::string text;
         // Every run of the sentence's words that answers it: with and without
         // an article, say. Empty when the sentence does not answer it, which
         // makes kNotNamed the right choice.

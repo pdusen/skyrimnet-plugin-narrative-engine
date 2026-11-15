@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { label, t } from '../i18n/strings';
 import type { ActionInfo } from '../types';
 
 interface Props {
@@ -23,18 +24,19 @@ declare global {
 }
 
 function formatRelative(deltaSeconds: number): string {
-    if (deltaSeconds < 1)     return 'just now';
-    if (deltaSeconds < 60)    return `${Math.round(deltaSeconds)}s ago`;
-    if (deltaSeconds < 3600)  return `${Math.round(deltaSeconds / 60)}m ago`;
-    if (deltaSeconds < 86400) return `${Math.round(deltaSeconds / 3600)}h ago`;
-    return `${Math.round(deltaSeconds / 86400)}d ago`;
+    if (deltaSeconds < 1) return t('time.just_now');
+    const ago = (time: string) => t('time.ago', { time });
+    if (deltaSeconds < 60) return ago(t('time.seconds', { s: Math.round(deltaSeconds) }));
+    if (deltaSeconds < 3600) return ago(t('time.minutes', { m: Math.round(deltaSeconds / 60) }));
+    if (deltaSeconds < 86400) return ago(t('time.hours', { h: Math.round(deltaSeconds / 3600) }));
+    return ago(t('time.days', { d: Math.round(deltaSeconds / 86400) }));
 }
 
 function formatCooldownHours(hours: number): string {
     if (hours <= 0) return '—';
-    if (hours < 1)  return `${Math.round(hours * 60)}m`;
-    if (hours < 24) return `${hours.toFixed(1)}h`;
-    return `${(hours / 24).toFixed(1)}d`;
+    if (hours < 1) return t('time.minutes', { m: Math.round(hours * 60) });
+    if (hours < 24) return t('time.hours', { h: hours.toFixed(1) });
+    return t('time.days', { d: (hours / 24).toFixed(1) });
 }
 
 export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props) {
@@ -95,20 +97,20 @@ export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props
         <table className="action-table">
             <thead>
                 <tr>
-                    <th className="col-name">Action</th>
-                    <th className="col-enabled">Enabled</th>
-                    <th className="col-last">Last Dispatched</th>
-                    <th className="col-cooldown" title="In-world hours. Frozen while the game is paused — including now.">
-                        Cooldown <span className="timer-clock">game time</span>
+                    <th className="col-name">{t('dispatch.column.action')}</th>
+                    <th className="col-enabled">{t('dispatch.column.enabled')}</th>
+                    <th className="col-last">{t('dispatch.column.last')}</th>
+                    <th className="col-cooldown" title={t('dispatch.column.cooldown.title')}>
+                        {t('dispatch.column.cooldown')} <span className="timer-clock">{t('clock.game_time')}</span>
                     </th>
-                    <th className="col-fire">Dispatch</th>
+                    <th className="col-fire">{t('dispatch.column.dispatch')}</th>
                 </tr>
             </thead>
             <tbody>
                 {actions.map(a => {
                     const last = a.last_dispatched_at > 0
                         ? formatRelative(nowSeconds - a.last_dispatched_at)
-                        : 'never';
+                        : t('dispatch.never');
                     // Dispatch button is disabled while any action is in
                     // flight (single-flight lock) OR while a click is
                     // pending — the beat-select LLM window between click
@@ -117,13 +119,13 @@ export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props
                     // by design.
                     const disableDispatch = anyInFlight || pendingDispatchName !== null;
                     const disableReason = anyInFlight
-                        ? `Another action is in flight (${inFlightName})`
+                        ? t('dispatch.busy', { beat: label('beat.', inFlightName ?? '') })
                         : pendingDispatchName !== null
-                            ? `Dispatching ${pendingDispatchName}…`
+                            ? t('dispatch.dispatching', { beat: label('beat.', pendingDispatchName) })
                             : null;
                     return (
                         <tr key={a.name}>
-                            <td className="col-name">{a.name}</td>
+                            <td className="col-name">{label('beat.', a.name)}</td>
                             <td className="col-enabled">
                                 <input
                                     type="checkbox"
@@ -141,9 +143,9 @@ export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props
                                     className="dispatch-button"
                                     disabled={disableDispatch}
                                     onClick={() => onDispatch(a.name)}
-                                    title={disableReason ?? 'Force-dispatch this action, bypassing cooldowns'}
+                                    title={disableReason ?? t('dispatch.force.title')}
                                 >
-                                    Dispatch
+                                    {t('dispatch.column.dispatch')}
                                 </button>
                             </td>
                         </tr>

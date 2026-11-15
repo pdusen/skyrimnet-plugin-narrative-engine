@@ -1,6 +1,9 @@
 #include <PlotMemories.h>
 
 #include <PlotCandidates.h>
+#include <PlotText.h>
+
+#include <ShippedLanguage.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -22,6 +25,8 @@ namespace
     namespace PlotMemories = NarrativeEngine::PlotMemories;
     namespace PlotModel = NarrativeEngine::PlotModel;
     namespace PlotVerbs = NarrativeEngine::PlotVerbs;
+    namespace PlotText = NarrativeEngine::PlotText;
+    using NarrativeEngine::Testing::ShippedEnglish;
     using PlotModel::StepOutcome;
     using PlotVerbs::Template;
 
@@ -117,12 +122,14 @@ TEST_CASE("PlotMemories at dispatch", "[PlotMemories][engine]")
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
                 const auto step = Cast(verb, kAgent);
-                const auto memories = PlotMemories::OnDispatch(plot, step);
+                const auto memories = PlotMemories::OnDispatch(ShippedEnglish(), plot, step);
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent, kBoss});
                 REQUIRE(Sources(memories)
                         == std::vector<std::string_view>{"agent_dispatched", "mastermind_dispatched"});
-                REQUIRE(memories[0].text == PlotVerbs::RenderStep(step, Template::AgentDispatched, plot.scheme));
-                REQUIRE(memories[1].text == PlotVerbs::RenderStep(step, Template::MastermindDispatched, plot.scheme));
+                REQUIRE(memories[0].text
+                        == PlotText::Memory(ShippedEnglish(), step, Template::AgentDispatched, plot.scheme));
+                REQUIRE(memories[1].text
+                        == PlotText::Memory(ShippedEnglish(), step, Template::MastermindDispatched, plot.scheme));
             }
         }
     }
@@ -133,7 +140,7 @@ TEST_CASE("PlotMemories at dispatch", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories = PlotMemories::OnDispatch(plot, Cast(verb, kBoss));
+                const auto memories = PlotMemories::OnDispatch(ShippedEnglish(), plot, Cast(verb, kBoss));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
                 REQUIRE(Sources(memories) == std::vector<std::string_view>{"self_dispatched"});
             }
@@ -143,7 +150,7 @@ TEST_CASE("PlotMemories at dispatch", "[PlotMemories][engine]")
     SECTION("when a memory is written")
     {
         const auto* watch = PlotVerbs::Find("watch");
-        const auto memories = PlotMemories::OnDispatch(plot, Cast(*watch, kAgent));
+        const auto memories = PlotMemories::OnDispatch(ShippedEnglish(), plot, Cast(*watch, kAgent));
 
         SECTION("should read as a finished sentence, with the scheme as its motive")
         {
@@ -166,7 +173,8 @@ TEST_CASE("PlotMemories at dispatch", "[PlotMemories][engine]")
 
     SECTION("when the verb has a place")
     {
-        const auto memories = PlotMemories::OnDispatch(plot, Cast(*PlotVerbs::Find("ask_around"), kAgent));
+        const auto memories =
+            PlotMemories::OnDispatch(ShippedEnglish(), plot, Cast(*PlotVerbs::Find("ask_around"), kAgent));
 
         SECTION("should name it as the location")
         {
@@ -191,8 +199,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories =
-                    Own(PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::Succeeded)));
+                const auto memories = Own(
+                    PlotMemories::OnResolve(ShippedEnglish(), plot, resolved(verb, kAgent, StepOutcome::Succeeded)));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent, kBoss});
                 REQUIRE(Sources(memories)
                         == std::vector<std::string_view>{"agent_succeeded", "mastermind_told_succeeded"});
@@ -207,8 +215,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories =
-                    Own(PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedCaught)));
+                const auto memories = Own(
+                    PlotMemories::OnResolve(ShippedEnglish(), plot, resolved(verb, kAgent, StepOutcome::FailedCaught)));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
                 REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_failed"});
             }
@@ -221,8 +229,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories =
-                    Own(PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedTimeout)));
+                const auto memories = Own(PlotMemories::OnResolve(
+                    ShippedEnglish(), plot, resolved(verb, kAgent, StepOutcome::FailedTimeout)));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
                 REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_timed_out"});
             }
@@ -233,8 +241,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
     {
         SECTION("should give them their success, and no report to themselves")
         {
-            const auto memories =
-                Own(PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, StepOutcome::Succeeded)));
+            const auto memories = Own(PlotMemories::OnResolve(
+                ShippedEnglish(), plot, resolved(*PlotVerbs::Find("steal"), kBoss, StepOutcome::Succeeded)));
             REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
             REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_succeeded"});
         }
@@ -242,7 +250,9 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         SECTION("should hold their failure back until the plot answers it")
         {
             for (const auto how : {StepOutcome::FailedCaught, StepOutcome::FailedTimeout}) {
-                REQUIRE(Own(PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, how))).empty());
+                REQUIRE(Own(PlotMemories::OnResolve(
+                                ShippedEnglish(), plot, resolved(*PlotVerbs::Find("steal"), kBoss, how)))
+                            .empty());
             }
         }
     }
@@ -259,13 +269,13 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
                     for (std::size_t i = 0; i < verb.slotCount; ++i) {
                         const auto& slot = verb.slots[i];
                         const bool noticed =
-                            how == StepOutcome::Succeeded && !slot.Text(PlotVerbs::TargetTemplate::Noticed).empty();
+                            how == StepOutcome::Succeeded && slot.Remembers(PlotVerbs::TargetTemplate::Noticed);
                         if (slot.kind == PlotVerbs::SlotKind::Person
                             && (noticed || PlotCandidates::AwarenessFired(slot.awareness, how))) {
                             expected.push_back(step.FindSlot(slot.name)->form);
                         }
                     }
-                    REQUIRE(Keepers(Reached(PlotMemories::OnResolve(plot, step))) == expected);
+                    REQUIRE(Keepers(Reached(PlotMemories::OnResolve(ShippedEnglish(), plot, step))) == expected);
                 }
             }
         }
@@ -275,8 +285,9 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
     {
         SECTION("should write nothing")
         {
-            REQUIRE(
-                PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("watch"), kAgent, StepOutcome::None)).empty());
+            REQUIRE(PlotMemories::OnResolve(
+                        ShippedEnglish(), plot, resolved(*PlotVerbs::Find("watch"), kAgent, StepOutcome::None))
+                        .empty());
         }
     }
 
@@ -287,10 +298,10 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
             const auto* steal = PlotVerbs::Find("steal");
             const auto failed = resolved(*steal, kAgent, StepOutcome::FailedCaught);
             const auto late = resolved(*steal, kAgent, StepOutcome::FailedTimeout);
-            REQUIRE(PlotMemories::OnResolve(plot, failed)[0].importance
-                    > PlotMemories::OnResolve(plot, late)[0].importance);
-            REQUIRE(PlotMemories::OnFailureAnswered(plot, failed, false)[0].importance
-                    > PlotMemories::OnFailureAnswered(plot, late, false)[0].importance);
+            REQUIRE(PlotMemories::OnResolve(ShippedEnglish(), plot, failed)[0].importance
+                    > PlotMemories::OnResolve(ShippedEnglish(), plot, late)[0].importance);
+            REQUIRE(PlotMemories::OnFailureAnswered(ShippedEnglish(), plot, failed, false)[0].importance
+                    > PlotMemories::OnFailureAnswered(ShippedEnglish(), plot, late, false)[0].importance);
         }
     }
 }
@@ -306,8 +317,8 @@ TEST_CASE("PlotMemories when the plot answers a failure", "[PlotMemories][engine
 
     SECTION("when it goes on another way")
     {
-        const auto memories =
-            PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::FailedCaught), true);
+        const auto memories = PlotMemories::OnFailureAnswered(
+            ShippedEnglish(), plot, resolved("steal", kAgent, StepOutcome::FailedCaught), true);
 
         SECTION("should give the mastermind one memory of the failure, ending in going on")
         {
@@ -329,11 +340,11 @@ TEST_CASE("PlotMemories when the plot answers a failure", "[PlotMemories][engine
     {
         SECTION("should give the mastermind the report alone, for a failure or a timeout")
         {
-            const auto failed =
-                PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::FailedCaught), false);
+            const auto failed = PlotMemories::OnFailureAnswered(
+                ShippedEnglish(), plot, resolved("steal", kAgent, StepOutcome::FailedCaught), false);
             REQUIRE(failed[0].text == "Idolaf reported back that Hulda had caught them trying to steal a ruby.");
-            const auto late =
-                PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::FailedTimeout), false);
+            const auto late = PlotMemories::OnFailureAnswered(
+                ShippedEnglish(), plot, resolved("steal", kAgent, StepOutcome::FailedTimeout), false);
             REQUIRE(Sources(late) == std::vector<std::string_view>{"mastermind_told_timed_out"});
         }
     }
@@ -342,8 +353,8 @@ TEST_CASE("PlotMemories when the plot answers a failure", "[PlotMemories][engine
     {
         SECTION("should give them their own failure, ending in going on when it does")
         {
-            const auto memories =
-                PlotMemories::OnFailureAnswered(plot, resolved("steal", kBoss, StepOutcome::FailedCaught), true);
+            const auto memories = PlotMemories::OnFailureAnswered(
+                ShippedEnglish(), plot, resolved("steal", kBoss, StepOutcome::FailedCaught), true);
             REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
             REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_failed"});
             REQUIRE(
@@ -357,8 +368,9 @@ TEST_CASE("PlotMemories when the plot answers a failure", "[PlotMemories][engine
     {
         SECTION("should write nothing")
         {
-            REQUIRE(
-                PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::Succeeded), true).empty());
+            REQUIRE(PlotMemories::OnFailureAnswered(
+                        ShippedEnglish(), plot, resolved("steal", kAgent, StepOutcome::Succeeded), true)
+                        .empty());
         }
     }
 }
@@ -367,8 +379,8 @@ TEST_CASE("PlotMemories when a plot ends", "[PlotMemories][engine]")
 {
     SECTION("when the scheme is brought off, or lost at its finish")
     {
-        const auto won = PlotMemories::OnSucceeded(Scheme());
-        const auto lost = PlotMemories::OnFinishFailed(Scheme());
+        const auto won = PlotMemories::OnSucceeded(ShippedEnglish(), Scheme());
+        const auto lost = PlotMemories::OnFinishFailed(ShippedEnglish(), Scheme());
 
         SECTION("should give the mastermind one memory naming only the scheme, relating nobody")
         {
@@ -382,7 +394,7 @@ TEST_CASE("PlotMemories when a plot ends", "[PlotMemories][engine]")
 
         SECTION("should weigh success above loss, and loss above giving up")
         {
-            const auto conceded = PlotMemories::OnConceded(Scheme());
+            const auto conceded = PlotMemories::OnConceded(ShippedEnglish(), Scheme());
             REQUIRE(won[0].importance > lost[0].importance);
             REQUIRE(lost[0].importance > conceded[0].importance);
         }
@@ -394,8 +406,8 @@ TEST_CASE("PlotMemories when a plot ends", "[PlotMemories][engine]")
         {
             auto orphan = Scheme();
             orphan.mastermind = 0;
-            REQUIRE(PlotMemories::OnSucceeded(orphan).empty());
-            REQUIRE(PlotMemories::OnFinishFailed(orphan).empty());
+            REQUIRE(PlotMemories::OnSucceeded(ShippedEnglish(), orphan).empty());
+            REQUIRE(PlotMemories::OnFinishFailed(ShippedEnglish(), orphan).empty());
         }
     }
 }
@@ -404,7 +416,7 @@ TEST_CASE("PlotMemories when a plot is given up", "[PlotMemories][engine]")
 {
     SECTION("when conceded")
     {
-        const auto memories = PlotMemories::OnConceded(Scheme());
+        const auto memories = PlotMemories::OnConceded(ShippedEnglish(), Scheme());
 
         SECTION("should give the mastermind one memory of giving the scheme up")
         {
@@ -420,7 +432,7 @@ TEST_CASE("PlotMemories for the people a step reaches", "[PlotMemories][engine]"
     const auto reached = [&plot](std::string_view verb, StepOutcome how) {
         auto step = Cast(*PlotVerbs::Find(verb), kAgent);
         step.outcome = how;
-        return Reached(PlotMemories::OnResolve(plot, step));
+        return Reached(PlotMemories::OnResolve(ShippedEnglish(), plot, step));
     };
 
     SECTION("when an agent is caught at it")
@@ -503,7 +515,7 @@ TEST_CASE("PlotMemories for a quiet success that leaves a mark", "[PlotMemories]
     const auto reached = [&plot](std::string_view verb) {
         auto step = Cast(*PlotVerbs::Find(verb), kAgent);
         step.outcome = StepOutcome::Succeeded;
-        return Reached(PlotMemories::OnResolve(plot, step));
+        return Reached(PlotMemories::OnResolve(ShippedEnglish(), plot, step));
     };
 
     SECTION("when a theft succeeds")

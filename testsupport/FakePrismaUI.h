@@ -72,7 +72,7 @@ namespace NarrativeEngine::Testing
         // page is handed the entire Director state in a single string, and a
         // buffer that truncated it would hand a test unparseable JSON and
         // look exactly like a compose that produced it.
-        char lastArgument[32768]{};
+        char lastArgument[262144]{};
 
         // Clears the per-call record, and deliberately NOT the interface
         // handshake above it. The wrapper performs that handshake exactly once

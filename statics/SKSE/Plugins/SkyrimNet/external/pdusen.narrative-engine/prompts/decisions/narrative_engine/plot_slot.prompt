@@ -2,10 +2,14 @@
    Asked by PlotPlanning for each slot with more than one candidate, and
    by PickAgent for the agent. The answer is a candidate key, c1 onward.
    Receives: mastermind { name }, scheme, finish (how the scheme is
-     meant to end; may be empty), step (the step's sentence with
-     each unfilled slot shown as its name in brackets), purpose (what the
-     step is for in the plan), slot (the name being filled), kind (person,
-     place or thing), options [{ key, line }].
+     meant to end; may be empty), step (the step, as a record plot_step
+     words with each unfilled slot shown as its name in brackets), purpose
+     (what the step is for in the plan, worded by plot_purpose), slot (the
+     name being filled), kind (person, place or thing), options [{ key,
+     name, occupation, relation, lives, named, self }]: who or what each
+     candidate is and, for a person, why they are on the list. `relation`
+     is how the mastermind knows them, a PlotMenus::RelationId; `lives`
+     where a stranger lives; `self` the mastermind doing it in person.
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
 [ state scheme ]
 {{ mastermind.name }} is working toward this: {{ scheme }}{% if length(finish) > 0 %}
@@ -13,13 +17,13 @@ It is meant to end with this: {{ finish }}{% endif %}
 [ end state ]
 
 [ state step ]
-{{ step }}
-{{ purpose }}
+{% include "components/narrative_engine/plot_step.prompt" %}
+{% include "components/narrative_engine/plot_purpose.prompt" %}
 [ end state ]
 
 [ question pick choice ]
 {% if kind == "place" %}Where should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`?{% else if kind == "thing" %}What should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`?{% else %}Who should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`? Prefer the person the scheme, or how it is meant to end, plainly names for this part of the step, if they are on the list.{% endif %}
 [ criteria ]
-{% for o in options %}{{ o.key }}: {{ o.line }}
+{% for o in options %}{{ o.key }}: {{ o.name }}{% if o.self %} themselves{% endif %}{% if length(o.occupation) > 0 %}, {{ o.occupation }}{% endif %}{% if length(o.relation) > 0 or length(o.lives) > 0 or o.named %} ({% if o.relation == "close_and_colleague" %}someone they know, in the same organisation{% else if o.relation == "close" %}someone they know{% else if o.relation == "colleague" %}in the same organisation{% else if o.relation == "neighbour" %}lives in the same hold{% else if length(o.lives) > 0 %}lives in {{ o.lives }}{% endif %}{% if o.named %}{% if length(o.relation) > 0 or length(o.lives) > 0 %}; {% endif %}named in the scheme{% endif %}){% endif %}
 {% endfor %}[ end criteria ]
 [ end question ]

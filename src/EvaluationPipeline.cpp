@@ -5,9 +5,12 @@
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
+#include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <PhaseTracker.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -107,7 +110,7 @@ namespace NarrativeEngine::EvaluationPipeline
                 e.player.gameDaysPassed = cal->GetDaysPassed();
                 e.player.timeOfDayHours = cal->GetHour();
                 // Seconds-since-epoch matches SkyrimNet's per-event
-                // gameTime field; FormatEventsText uses it for "N ago".
+                // gameTime field; DescribeEvents measures each `age` from it.
                 e.player.gameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
             }
 
@@ -253,28 +256,23 @@ namespace NarrativeEngine::EvaluationPipeline
                 // what a book said has never moved that needle — but one
                 // illustrated book is tens of kilobytes and has blown a
                 // request on its own.
-                SkyrimNetEvents::FormatEventsText(parsed,
-                                                  snapshot.player.gameTimeSeconds,
-                                                  SkyrimNetEvents::BookTextPolicy::Omit,
-                                                  snapshot.player.name);
+                SkyrimNetEvents::DescribeEvents(parsed,
+                                                snapshot.player.gameTimeSeconds,
+                                                SkyrimNetEvents::BookTextPolicy::Omit,
+                                                snapshot.player.name);
 
-                // Drop unrecognized event types (FormatEventsText's
-                // "(no data)" last-resort case). Log each so the type
-                // surfaces and we can add a renderer if needed.
+                // Drop unrecognized event types that carried nothing
+                // (DescribeEvents' no_data last-resort case). Log each so
+                // the type surfaces and we can add a kind if needed.
                 {
-                    static constexpr std::string_view kNoData = "(no data)";
                     nlohmann::json kept = nlohmann::json::array();
                     for (auto& evt : parsed) {
                         if (!evt.is_object())
                             continue;
-                        auto it = evt.find("text");
-                        if (it != evt.end() && it->is_string()) {
-                            const auto& s = it->get_ref<const std::string&>();
-                            if (s.size() >= kNoData.size()
-                                && s.compare(s.size() - kNoData.size(), kNoData.size(), kNoData) == 0) {
-                                logger::warn("BuildPromptContext: dropping event with no usable text: {}", evt.dump());
-                                continue;
-                            }
+                        if (const auto line = evt.find("line");
+                            line != evt.end() && JsonUtils::StringOr(*line, "kind") == "no_data") {
+                            logger::warn("BuildPromptContext: dropping event with no usable data: {}", evt.dump());
+                            continue;
                         }
                         kept.push_back(std::move(evt));
                     }
@@ -312,12 +310,18 @@ namespace NarrativeEngine::EvaluationPipeline
         {
             nlohmann::json tail = nlohmann::json::array();
             for (const auto& r : snapshot.decisionLogTail) {
+                // What went wrong, and what the note is, go as codes for
+                // story_eval to word; the model's own note goes as it wrote it.
                 nlohmann::json entry = {
                     {"t", r.realTimeSec},
                     {"tension_score", r.tensionScore},
                     {"phase", PhaseTracker::PhaseName(r.currentPhase)},
-                    {"action", r.beatSelected},
-                    {"narrative_note", r.narrativeNote},
+                    {"beat", r.beatSelected},
+                    {"failure", DecisionLog::FailureId(r.failure)},
+                    {"failure_detail", r.failureDetail},
+                    {"note", DecisionLog::NoteId(r.note)},
+                    {"narrative_note",
+                     r.note == DecisionLog::DecisionRecord::Note::Model ? r.narrativeNote : std::string{}},
                 };
                 if (r.advancedToPhase) {
                     entry["advanced_to"] = PhaseTracker::PhaseName(*r.advancedToPhase);
@@ -342,6 +346,7 @@ namespace NarrativeEngine::EvaluationPipeline
         }
 
         ctx["alpha_canon_signals"] = snapshot.alphaCanonSignals;
+        PromptLanguage::Add(ctx, {"narrative_note"}, Localization::Get());
 
         return ctx.dump();
     }
@@ -362,12 +367,12 @@ namespace NarrativeEngine::EvaluationPipeline
                                                   /*cb=*/nullptr,
                                                   /*allow_exceptions=*/false);
         if (parsed.is_discarded()) {
-            r.narrativeNote = "parse_failure: invalid JSON";
+            r.note = DecisionLog::DecisionRecord::Note::InvalidJson;
             logger::warn("ParseDecision: invalid JSON response: {}", jsonResponse);
             return r;
         }
         if (!parsed.is_object()) {
-            r.narrativeNote = "parse_failure: response was not a JSON object";
+            r.note = DecisionLog::DecisionRecord::Note::NotAnObject;
             logger::warn("ParseDecision: response wasn't an object: {}", jsonResponse);
             return r;
         }
@@ -413,7 +418,7 @@ namespace NarrativeEngine::EvaluationPipeline
             logger::debug("ApplyDecision: tension={} advance={} note=\"{}\"",
                           record.tensionScore,
                           record.advancedToPhase ? PhaseTracker::PhaseName(*record.advancedToPhase) : "(no)",
-                          record.narrativeNote);
+                          DecisionLog::NoteText(record, Localization::English()));
         }
     }
 

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": ".test-build",
+    "rootDir": "src",
+    "sourceMap": false
+  },
+  "include": ["src/i18n/textTemplate.ts"]
+}

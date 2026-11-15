@@ -5,9 +5,13 @@
 #include <string_view>
 #include <vector>
 
+#include <LanguageTable.h>
+#include <Localization.h>
 #include <PlotCasting.h>
+#include <PlotMenus.h>
 #include <PlotModel.h>
 #include <PlotPlanning.h>
+#include <PlotRejection.h>
 #include <PlotState.h>
 #include <PlotThread.h>
 #include <PlotVerbs.h>
@@ -70,13 +74,20 @@ namespace NarrativeEngine::PlotBirth
     struct CastOutcome
     {
         bool ok = false;
-        std::string rejection;
+        PlotRejection::Rejection rejection;
         // Index into the shortlist the prompt was rendered from,
         // recovered from the `form_id` the model named. A membership
         // test against a small closed list, which is the one piece of
         // this pipeline that still validates the way the menus did.
         std::size_t choice = 0;
     };
+
+    // Pure. True when a response opens as a JSON object and does not parse
+    // as one: an answer cut off on its way back, rather than one that
+    // ignored the format. The provider has cut answers off mid-object, more
+    // often the more tokens a language takes, and nothing the model is told
+    // on a retry would prevent that.
+    [[nodiscard]] bool IsCutOff(const std::string& response);
 
     // Pure. Response text in, a shortlist index out.
     //
@@ -114,7 +125,7 @@ namespace NarrativeEngine::PlotBirth
     struct AmbitionOutcome
     {
         bool ok = false;
-        std::string rejection;
+        PlotRejection::Rejection rejection;
 
         // The AGENDA: the larger thing this person is ultimately after,
         // and deliberately not something this system can ever finish.
@@ -141,10 +152,11 @@ namespace NarrativeEngine::PlotBirth
 
     // Resolves the roles a scheme call named for its goal: `named` holds each
     // slot's name and the words written for it. Fills `resolved` and returns
-    // nothing when every role fits, else why not, for the retry.
-    using RoleResolver = std::function<std::string(const PlotVerbs::Verb& goal,
-                                                   const std::vector<PlotModel::SlotValue>& named,
-                                                   std::vector<PlotModel::SlotValue>& resolved)>;
+    // nothing when every role fits, else why each does not, for the retry.
+    using RoleResolver =
+        std::function<std::vector<PlotRejection::Rejection>(const PlotVerbs::Verb& goal,
+                                                            const std::vector<PlotModel::SlotValue>& named,
+                                                            std::vector<PlotModel::SlotValue>& resolved)>;
 
     struct TextLimits
     {
@@ -178,7 +190,8 @@ namespace NarrativeEngine::PlotBirth
                                                 const TextLimits& limits,
                                                 std::string_view playerName = {},
                                                 const RoleResolver& resolveRoles = {},
-                                                const std::vector<std::string>& accomplished = {});
+                                                const std::vector<std::string>& accomplished = {},
+                                                const LanguageTable::Table& table = Localization::Get());
 
     // --- Call 3: how ------------------------------------------------------
     //
@@ -190,7 +203,10 @@ namespace NarrativeEngine::PlotBirth
     // prompt asks; false for one that opens with a pronoun, an article, or a
     // name followed by what they mean to do ("Korir plans to ..."), each of
     // which would read as broken grammar in every memory the plot writes.
-    [[nodiscard]] bool SchemeOpensWithVerb(std::string_view scheme);
+    // In `table`'s language, by its [Matching] Scheme check. Text with no
+    // words fails, whatever the check says.
+    [[nodiscard]] bool SchemeOpensWithVerb(std::string_view scheme,
+                                           const LanguageTable::Table& table = Localization::Get());
 
     // --- The engine-bound half --------------------------------------------
 
@@ -243,10 +259,28 @@ namespace NarrativeEngine::PlotBirth
     //
     // `decisions` is how many decisions planning asked, kept or not, for
     // the trace.
+    //
+    // `world` is what the birth may name, and `table` the language it is
+    // asked and read in: the output-language line, [Prompt.Form],
+    // [Matching] and the name matchers. Both the session's, except for the
+    // language trial, whose world has its items and factions worded in the
+    // trial's table (PlotMenus::Translated).
+    //
+    // `refusals`, when given, collects every answer refused along the way,
+    // a retried one included, by stage ("cast", "ambition", "steps") and
+    // code: what the language trial counts.
+    struct Refusal
+    {
+        std::string stage;
+        PlotRejection::Code code = PlotRejection::Code::None;
+    };
     [[nodiscard]] bool Compose(const PlotThread::Token& pt,
                                const PlotCasting::Population& population,
                                const std::vector<RE::FormID>& shortlist,
                                const std::vector<PlotModel::PastScheme>& past,
                                PlotModel::Plot& plot,
-                               std::size_t& decisions);
+                               std::size_t& decisions,
+                               const PlotMenus::World& world = PlotMenus::CurrentWorld(),
+                               const LanguageTable::Table& table = Localization::Get(),
+                               std::vector<Refusal>* refusals = nullptr);
 } // namespace NarrativeEngine::PlotBirth

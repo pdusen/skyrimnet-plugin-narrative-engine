@@ -1,0 +1,4 @@
+{# plot_admitted.prompt — who or what a refused role could be instead, as it
+   follows the refusal: "; it can be Idolaf, Vignar or Hulda". Included after
+   setting `admitted` to { names, more }: up to eight names, and `more` when
+   the list was cut. No trailing newline. #}{% if length(admitted.names) == 0 %}; nobody this plot can reach can be{% else %}{% if admitted.more %}; it could be, among others, {% else %}; it can be {% endif %}{% for n in admitted.names %}{% if not loop.is_first %}{% if loop.is_last %} or {% else %}, {% endif %}{% endif %}{{ n }}{% endfor %}{% endif -%}

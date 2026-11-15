@@ -1,10 +1,13 @@
 #pragma once
 
+#include <LanguageTable.h>
 #include <PhaseTracker.h>
+#include <TextKeys.h>
 
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace SKSE
@@ -29,11 +32,58 @@ namespace NarrativeEngine::DecisionLog
         std::uint32_t tensionScore = 0; // 0..100
         PhaseTracker::Phase currentPhase = PhaseTracker::Phase::Exposition;
         std::optional<PhaseTracker::Phase> advancedToPhase; // nullopt = no advancement this tick
-        std::string beatSelected;                           // empty = no beat selected
+        std::string beatSelected;                           // the chosen beat's id; empty = none, or a failure
         std::string beatParametersJSON;
-        std::string narrativeNote;                 // LLM-supplied rationale
+        std::string narrativeNote;                 // the model's own rationale, and nothing else
         std::uint32_t alphaCanonActiveSignals = 0; // bitmask snapshot at evaluation time
+
+        // Why beat selection failed, when it did. The words are the
+        // language file's ([Decision]); see ActionText.
+        enum class Failure : std::uint8_t
+        {
+            None,
+            BeatMissing, // the model chose a beat the registry does not have
+            LlmError,    // the call itself failed
+            NotJson,     // the reply was not a JSON object
+            NotOffered,  // the model kept choosing something it was not offered
+        };
+        Failure failure = Failure::None;
+        // What the failure was about, verbatim: the beat id, the model's
+        // reply, or the validator's message. Diagnostic data, like a log
+        // line, so it is kept as it came.
+        std::string failureDetail;
+
+        // Where the note came from: the model, or one of the plugin's own
+        // stand-ins for it, whose words are the language file's; see
+        // NoteText.
+        enum class Note : std::uint8_t
+        {
+            Model,
+            InvalidJson,    // the evaluation's reply did not parse
+            NotAnObject,    // it parsed, but not as an object
+            ForcedDispatch, // a beat fired from the debug UI
+        };
+        Note note = Note::Model;
     };
+
+    // The keys ActionText and NoteText render from.
+    [[nodiscard]] const std::vector<TextKeys::Key>& Keys();
+
+    // What was chosen: the beat's id, or "(failed: ...)" with the reason.
+    [[nodiscard]] std::string ActionText(const DecisionRecord& record, const LanguageTable::Table& table);
+
+    // Why the choice failed, worded; empty when it did not.
+    [[nodiscard]] std::string FailureText(const DecisionRecord& record, const LanguageTable::Table& table);
+
+    // The record's note: the model's own words, or the stand-in for why
+    // there were none.
+    [[nodiscard]] std::string NoteText(const DecisionRecord& record, const LanguageTable::Table& table);
+
+    // The failure and the note as tokens, for the Director's own prompt to
+    // word: beat_missing, llm_error, not_json, not_offered, or empty for none;
+    // model, invalid_json, not_an_object or forced_dispatch.
+    [[nodiscard]] std::string_view FailureId(DecisionRecord::Failure failure) noexcept;
+    [[nodiscard]] std::string_view NoteId(DecisionRecord::Note note) noexcept;
 
     // SKSE co-save record type ID for the decision log. Frozen.
     inline constexpr std::uint32_t kRecordTypeId = 'DCLG';

@@ -13,24 +13,20 @@
 
 namespace NarrativeEngine::SkyrimNetEvents
 {
-    std::string FormatRelativeGameTime(double secondsAgo)
+    nlohmann::json RelativeGameTime(double seconds)
     {
-        if (secondsAgo < 60.0)
-            return "just now";
-        if (secondsAgo < 3600.0) {
-            const int m = static_cast<int>(secondsAgo / 60.0);
-            return std::to_string(m) + (m == 1 ? " minute ago" : " minutes ago");
-        }
-        if (secondsAgo < 86400.0) {
-            const int h = static_cast<int>(secondsAgo / 3600.0);
-            return std::to_string(h) + (h == 1 ? " hour ago" : " hours ago");
-        }
-        if (secondsAgo < 7.0 * 86400.0) {
-            const int d = static_cast<int>(secondsAgo / 86400.0);
-            return std::to_string(d) + (d == 1 ? " day ago" : " days ago");
-        }
-        const int w = static_cast<int>(secondsAgo / (7.0 * 86400.0));
-        return std::to_string(w) + (w == 1 ? " week ago" : " weeks ago");
+        const auto bucket = [](double count, const char* unit) {
+            return nlohmann::json{{"value", static_cast<int>(count)}, {"unit", unit}};
+        };
+        if (seconds < 60.0)
+            return bucket(0.0, "moment");
+        if (seconds < 3600.0)
+            return bucket(seconds / 60.0, "minute");
+        if (seconds < 86400.0)
+            return bucket(seconds / 3600.0, "hour");
+        if (seconds < 7.0 * 86400.0)
+            return bucket(seconds / 86400.0, "day");
+        return bucket(seconds / (7.0 * 86400.0), "week");
     }
 
     double MemoryAgeGameSeconds(const nlohmann::json& memoryRow, double nowGameSeconds)
@@ -52,30 +48,10 @@ namespace NarrativeEngine::SkyrimNetEvents
         return std::max(0.0, nowGameSeconds - gameTime);
     }
 
-    std::string FormatRelativeGameDuration(double seconds)
-    {
-        if (seconds < 60.0)
-            return "less than a minute";
-        if (seconds < 3600.0) {
-            const int m = static_cast<int>(seconds / 60.0);
-            return std::to_string(m) + (m == 1 ? " minute" : " minutes");
-        }
-        if (seconds < 86400.0) {
-            const int h = static_cast<int>(seconds / 3600.0);
-            return std::to_string(h) + (h == 1 ? " hour" : " hours");
-        }
-        if (seconds < 7.0 * 86400.0) {
-            const int d = static_cast<int>(seconds / 86400.0);
-            return std::to_string(d) + (d == 1 ? " day" : " days");
-        }
-        const int w = static_cast<int>(seconds / (7.0 * 86400.0));
-        return std::to_string(w) + (w == 1 ? " week" : " weeks");
-    }
-
-    void FormatEventsText(nlohmann::json& events,
-                          double currentGameTimeSeconds,
-                          BookTextPolicy bookText,
-                          std::string_view playerName)
+    void DescribeEvents(nlohmann::json& events,
+                        double currentGameTimeSeconds,
+                        BookTextPolicy bookText,
+                        std::string_view playerName)
     {
         for (auto& evt : events) {
             if (!evt.is_object())
@@ -84,8 +60,8 @@ namespace NarrativeEngine::SkyrimNetEvents
             const std::string type = JsonUtils::StringOr(evt, "type");
 
             // Normalize the book body before anything reads `data`, so both
-            // the synthesized `text` below and the event object we hand back
-            // to the caller are free of the raw markup.
+            // the `line` below and the event object we hand back to the
+            // caller are free of the raw markup.
             if (type == "book_read") {
                 if (auto dataIt = evt.find("data"); dataIt != evt.end() && dataIt->is_object()) {
                     if (auto textIt = dataIt->find("book_text"); textIt != dataIt->end()) {
@@ -114,42 +90,29 @@ namespace NarrativeEngine::SkyrimNetEvents
                 return data ? JsonUtils::StringOr(*data, key) : std::string{};
             };
 
-            std::string text;
-            if (type == "dialogue" || type == "dialogue_background") {
-                const std::string speaker = str("speaker");
-                const std::string listener = str("listener");
-                const std::string dialogue = str("dialogue");
-                if (!listener.empty()) {
-                    text = speaker + " -> " + listener + ": \"" + dialogue + "\"";
-                } else {
-                    text = speaker + ": \"" + dialogue + "\"";
-                }
-            } else if (type == "dialogue_player_text") {
-                const std::string speaker = str("speaker");
-                const std::string listener = str("listener");
-                const std::string dialogue = str("dialogue");
-                if (!listener.empty()) {
-                    text = "(player) " + speaker + " -> " + listener + ": \"" + dialogue + "\"";
-                } else {
-                    text = "(player) " + speaker + ": \"" + dialogue + "\"";
-                }
+            nlohmann::json line;
+            if (type == "dialogue" || type == "dialogue_background" || type == "dialogue_player_text") {
+                line = {{"kind", type == "dialogue_player_text" ? "player_dialogue" : "dialogue"},
+                        {"speaker", str("speaker")},
+                        {"listener", str("listener")},
+                        {"dialogue", str("dialogue")}};
             } else if (type == "gamemaster_dialogue") {
-                const std::string speaker = str("speaker");
-                const std::string target = str("target");
-                const std::string topic = str("topic");
-                const std::string dialogue = str("dialogue");
-                text = speaker + " -> " + target + " (topic: " + topic + "): " + dialogue;
+                line = {{"kind", "gamemaster_dialogue"},
+                        {"speaker", str("speaker")},
+                        {"target", str("target")},
+                        {"topic", str("topic")},
+                        {"dialogue", str("dialogue")}};
             } else if (type == "npc_thoughts") {
-                text = str("npc_name") + " (thinking): \"" + str("thoughts") + "\"";
+                line = {{"kind", "npc_thoughts"}, {"name", str("npc_name")}, {"thoughts", str("thoughts")}};
             } else if (type == "death") {
-                text = str("killer") + " killed " + str("victim");
+                line = {{"kind", "death"}, {"killer", str("killer")}, {"victim", str("victim")}};
             } else if (type == "persistent_generic") {
-                text = str("line");
+                line = {{"kind", "text"}, {"text", str("line")}};
             } else if (type == "book_read") {
-                // Given its own branch rather than the JSON-dump fallback
-                // below: that fallback is what put ~20KB of tag soup into a
-                // Director prompt and blew the request. SkyrimNet carries
-                // three name-ish fields; `book_title` is the in-fiction one,
+                // Given its own kind rather than the fallback below: dumping
+                // its data is what put ~20KB of tag soup into a Director
+                // prompt and blew the request. SkyrimNet carries three
+                // name-ish fields; `book_title` is the in-fiction one,
                 // `book_name` the record's display name (usually identical),
                 // and the EditorID is a last resort so a nameless book still
                 // reads as something rather than "a book".
@@ -159,40 +122,35 @@ namespace NarrativeEngine::SkyrimNetEvents
                 if (title.empty())
                     title = str("book_editor_id");
 
-                const std::string reader = playerName.empty() ? std::string("The player") : std::string(playerName);
-                text = title.empty() ? (reader + " read a book") : (reader + " read \"" + title + "\"");
-
-                // Empty under BookTextPolicy::Omit — erased above.
-                if (const std::string body = str("book_text"); !body.empty()) {
-                    text += ":\n" + body;
-                }
+                // Empty under BookTextPolicy::Omit -- erased above.
+                line = {{"kind", "book_read"},
+                        {"reader", std::string{playerName}},
+                        {"title", std::move(title)},
+                        {"body", str("book_text")}};
             } else {
                 // Unknown discriminator. Many third-party SkyrimNet plugins
                 // (e.g. SeverActions' "follower_left") emit events whose
-                // `data` is just a pre-rendered string sentence — perfect
+                // `data` is just a pre-rendered string sentence -- perfect
                 // for our purposes. Use it directly when that's the shape.
-                // Fall back to a JSON dump of an object payload, and to a
-                // last-resort "(no data)" when the field is missing.
-                if (auto it = evt.find("data"); it != evt.end()) {
-                    if (it->is_string()) {
-                        text = it->get<std::string>();
-                    } else if (it->is_object() || it->is_array()) {
-                        text = it->dump();
-                    } else {
-                        text = "(no data)";
-                    }
+                // Fall back to a JSON dump of an object payload, and to
+                // no_data when the field is missing.
+                const auto it = evt.find("data");
+                if (it != evt.end() && it->is_string()) {
+                    line = {{"kind", "text"}, {"text", it->get<std::string>()}};
+                } else if (it != evt.end() && (it->is_object() || it->is_array())) {
+                    line = {{"kind", "text"}, {"text", it->dump()}};
                 } else {
-                    text = "(no data)";
+                    line = {{"kind", "no_data"}};
                 }
             }
 
             if (evt.contains("gameTime") && evt["gameTime"].is_number()) {
                 const double eventTime = evt["gameTime"].get<double>();
                 const double delta = currentGameTimeSeconds - eventTime;
-                text = "[" + FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + text;
+                evt["age"] = RelativeGameTime(delta < 0.0 ? 0.0 : delta);
             }
 
-            evt["text"] = std::move(text);
+            evt["line"] = std::move(line);
         }
     }
 
@@ -210,13 +168,6 @@ namespace NarrativeEngine::SkyrimNetEvents
             return IsInternalEvent(e) && e["ne_kind"].get<std::string>() == "hit";
         }
 
-        // Unordered actor-pair key for "Hans vs Luke" grouping. Canonicalize
-        // by ordering the two names so {Hans,Luke} == {Luke,Hans}.
-        std::string PairKey(const std::string& a, const std::string& b)
-        {
-            return (a < b) ? (a + "\x1f" + b) : (b + "\x1f" + a);
-        }
-
         struct ActorPairStats
         {
             std::string a, b; // canonical (a <= b)
@@ -231,24 +182,21 @@ namespace NarrativeEngine::SkyrimNetEvents
         struct EnvBucket
         {
             std::string target;
-            std::string sourceLabel; // "" for bare fallback
+            std::string source;
+            std::string actor;
             int count = 0;
         };
 
-        // Render a single condensed entry's body text from the pending hits.
-        // Plan rules:
-        //   - 1 actor-vs-actor hit         → "A strikes B"
-        //   - 1 pair, one-sided (count>1)  → "A attacks B"
-        //   - 1 pair, both sides           → "A and B trade blows"
-        //   - multiple pairs               → "Combat continues: A attacks B; C attacks D"
-        //                                     (top 3, ", and others" suffix if >3)
-        //   - 1 env hit, with label        → "T took damage from <L>"
-        //   - >1 env hit, same (T,L)       → "T took repeated damage from <L>"
-        //   - 1 env hit, no label          → "T took damage"
-        //   - >1 env hit, same T, no label → "T took repeated damage"
-        //   - mixed                        → actor summary, then env summaries,
-        //                                     joined with "; "
-        std::string RenderCondensedBody(const std::vector<nlohmann::json>& hits)
+        // A condensed entry's `line` from the pending hits. Rules:
+        //   - 1 actor-vs-actor hit         -> one fight, shape strike
+        //   - 1 pair, one-sided (count>1)  -> one fight, shape attack
+        //   - 1 pair, both sides           -> one fight, shape trade
+        //   - multiple pairs               -> the top 3 by hits, each shape
+        //                                     attack, and `others` if more
+        //   - any other hit                -> damage to its target, grouped by
+        //                                     target and source, `repeated`
+        //                                     past one
+        nlohmann::json CondensedLine(const std::vector<nlohmann::json>& hits)
         {
             std::vector<ActorPairStats> pairs;
             std::vector<EnvBucket> envs;
@@ -261,20 +209,24 @@ namespace NarrativeEngine::SkyrimNetEvents
                 pairs.push_back({canA, canB, 0, 0});
                 return pairs.back();
             };
-            auto findEnv = [&](const std::string& target, const std::string& label) -> EnvBucket& {
+            auto findEnv =
+                [&](const std::string& target, const std::string& source, const std::string& actor) -> EnvBucket& {
                 for (auto& e : envs) {
-                    if (e.target == target && e.sourceLabel == label)
+                    if (e.target == target && e.source == source && e.actor == actor)
                         return e;
                 }
-                envs.push_back({target, label, 0});
+                envs.push_back({target, source, actor, 0});
                 return envs.back();
             };
 
             for (const auto& h : hits) {
-                const bool namedActor = h.value("ne_actor_is_named", false);
-                const std::string actor = JsonUtils::StringOr(h, "originatingActorName");
-                const std::string targ = JsonUtils::StringOr(h, "targetActorName");
-                if (namedActor && !actor.empty() && !targ.empty()) {
+                static const nlohmann::json kNoLine = nlohmann::json::object();
+                const auto lineIt = h.find("line");
+                const nlohmann::json& hit = lineIt != h.end() ? *lineIt : kNoLine;
+                const std::string source = JsonUtils::StringOr(hit, "source");
+                const std::string actor = JsonUtils::StringOr(hit, "actor");
+                const std::string targ = JsonUtils::StringOr(hit, "target");
+                if (source == "actor" && !actor.empty() && !targ.empty()) {
                     const std::string canA = (actor < targ) ? actor : targ;
                     const std::string canB = (actor < targ) ? targ : actor;
                     auto& p = findPair(canA, canB);
@@ -283,87 +235,63 @@ namespace NarrativeEngine::SkyrimNetEvents
                     else
                         p.bToA++;
                 } else {
-                    findEnv(targ, actor).count++;
+                    findEnv(targ, source, actor).count++;
                 }
             }
 
-            std::string actorSummary;
-            if (!pairs.empty()) {
-                if (pairs.size() == 1) {
-                    auto& p = pairs.front();
-                    const int total = p.Total();
-                    if (total <= 1) {
-                        // Single hit; render with attacker first.
-                        const std::string& aggressor = (p.aToB > 0) ? p.a : p.b;
-                        const std::string& victim = (p.aToB > 0) ? p.b : p.a;
-                        actorSummary = aggressor + " strikes " + victim;
-                    } else if (p.aToB == 0 || p.bToA == 0) {
-                        const std::string& aggressor = (p.aToB > 0) ? p.a : p.b;
-                        const std::string& victim = (p.aToB > 0) ? p.b : p.a;
-                        actorSummary = aggressor + " attacks " + victim;
-                    } else {
-                        actorSummary = p.a + " and " + p.b + " trade blows";
-                    }
+            const auto fight = [](const std::string& aggressor, const std::string& victim, const char* shape) {
+                return nlohmann::json{{"aggressor", aggressor}, {"victim", victim}, {"shape", shape}};
+            };
+
+            nlohmann::json fights = nlohmann::json::array();
+            bool others = false;
+            if (pairs.size() == 1) {
+                auto& p = pairs.front();
+                const std::string& aggressor = (p.aToB > 0) ? p.a : p.b;
+                const std::string& victim = (p.aToB > 0) ? p.b : p.a;
+                if (p.Total() <= 1) {
+                    fights.push_back(fight(aggressor, victim, "strike"));
+                } else if (p.aToB == 0 || p.bToA == 0) {
+                    fights.push_back(fight(aggressor, victim, "attack"));
                 } else {
-                    // Multiple distinct pairs — top 3 by total hits.
-                    std::sort(pairs.begin(), pairs.end(), [](const ActorPairStats& x, const ActorPairStats& y) {
-                        return x.Total() > y.Total();
-                    });
-                    actorSummary = "Combat continues: ";
-                    const std::size_t cap = std::min<std::size_t>(3, pairs.size());
-                    for (std::size_t i = 0; i < cap; ++i) {
-                        if (i > 0)
-                            actorSummary += "; ";
-                        const auto& p = pairs[i];
-                        const std::string& aggressor = (p.aToB >= p.bToA) ? p.a : p.b;
-                        const std::string& victim = (p.aToB >= p.bToA) ? p.b : p.a;
-                        actorSummary += aggressor + " attacks " + victim;
-                    }
-                    if (pairs.size() > cap) {
-                        actorSummary += ", and others";
-                    }
+                    fights.push_back(fight(p.a, p.b, "trade"));
                 }
+            } else if (pairs.size() > 1) {
+                // Multiple distinct pairs -- top 3 by total hits.
+                std::sort(pairs.begin(), pairs.end(), [](const ActorPairStats& x, const ActorPairStats& y) {
+                    return x.Total() > y.Total();
+                });
+                const std::size_t cap = std::min<std::size_t>(3, pairs.size());
+                for (std::size_t i = 0; i < cap; ++i) {
+                    const auto& p = pairs[i];
+                    const std::string& aggressor = (p.aToB >= p.bToA) ? p.a : p.b;
+                    const std::string& victim = (p.aToB >= p.bToA) ? p.b : p.a;
+                    fights.push_back(fight(aggressor, victim, "attack"));
+                }
+                others = pairs.size() > cap;
             }
 
-            std::vector<std::string> envSummaries;
-            envSummaries.reserve(envs.size());
+            nlohmann::json damage = nlohmann::json::array();
             for (const auto& e : envs) {
-                std::string s;
-                if (e.count <= 1) {
-                    s = e.target + " took damage";
-                    if (!e.sourceLabel.empty())
-                        s += " from " + e.sourceLabel;
-                } else {
-                    s = e.target + " took repeated damage";
-                    if (!e.sourceLabel.empty())
-                        s += " from " + e.sourceLabel;
-                }
-                envSummaries.push_back(std::move(s));
+                damage.push_back(
+                    {{"target", e.target}, {"source", e.source}, {"actor", e.actor}, {"repeated", e.count > 1}});
             }
 
-            std::string body;
-            if (!actorSummary.empty())
-                body = actorSummary;
-            for (auto& s : envSummaries) {
-                if (!body.empty())
-                    body += "; ";
-                body += s;
-            }
-            return body;
+            return {{"kind", "combat_summary"},
+                    {"fights", std::move(fights)},
+                    {"others", others},
+                    {"damage", std::move(damage)}};
         }
 
         // Build the final condensed JSON entry from the pending-hits buffer.
-        // Inherits the timestamp + relative-prefix from the *most recent*
-        // hit in the run.
+        // Inherits the timestamps and age of the *most recent* hit in the
+        // run.
         nlohmann::json BuildCondensedEntry(const std::vector<nlohmann::json>& hits, double currentGameTimeSeconds)
         {
             const auto& tail = hits.back();
             const double localTime = JsonUtils::NumberOr(tail, "localTime");
             const double gameTime = JsonUtils::NumberOr(tail, "gameTime");
             const double delta = currentGameTimeSeconds - gameTime;
-
-            const std::string body = RenderCondensedBody(hits);
-            const std::string text = "[" + FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + body;
 
             nlohmann::json j;
             // Same shared `type` the individual combat events use, so the
@@ -373,7 +301,8 @@ namespace NarrativeEngine::SkyrimNetEvents
             j["ne_kind"] = "combat_summary";
             j["localTime"] = localTime;
             j["gameTime"] = gameTime;
-            j["text"] = text;
+            j["age"] = RelativeGameTime(delta < 0.0 ? 0.0 : delta);
+            j["line"] = CondensedLine(hits);
             return j;
         }
     } // namespace
@@ -466,8 +395,8 @@ namespace NarrativeEngine::SkyrimNetEvents
         bool needMarker = false;
         double sinceSeconds = 0.0;
         if (out.empty()) {
-            // Everything got filtered (or nothing was ever there). Use the
-            // sentinel "over an hour" phrasing — we don't know the exact
+            // Everything got filtered (or nothing was ever there). Say
+            // idle_long, "over an hour" — we don't know the exact
             // gap because we just dropped the last event we could have
             // measured against.
             needMarker = true;
@@ -482,9 +411,6 @@ namespace NarrativeEngine::SkyrimNetEvents
             }
         }
         if (needMarker) {
-            const std::string duration =
-                (sinceSeconds < 0.0) ? std::string("over an hour") : FormatRelativeGameDuration(sinceSeconds);
-
             nlohmann::json marker;
             marker["type"] = "idle_marker";
             marker["ne_kind"] = "idle_marker";
@@ -494,7 +420,9 @@ namespace NarrativeEngine::SkyrimNetEvents
             marker["gameTime"] = currentGameTimeSeconds;
             marker["localTime"] =
                 std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-            marker["text"] = "Nothing notable has happened for " + duration;
+            marker["line"] = (sinceSeconds < 0.0)
+                                 ? nlohmann::json{{"kind", "idle_long"}}
+                                 : nlohmann::json{{"kind", "idle"}, {"duration", RelativeGameTime(sinceSeconds)}};
             out.push_back(std::move(marker));
         }
 

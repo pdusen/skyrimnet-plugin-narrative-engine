@@ -1,0 +1,23 @@
+$NE_About	О моде
+$NE_Author	Автор
+$NE_Description	Описание
+$NE_DescriptionText	Режиссер повествования для SkyrimNet
+$NE_Controls	Управление
+$NE_DashboardHotkey	Клавиша панели
+$NE_DashboardHotkey_Help	Нажмите клавишу, чтобы назначить ее. Переключатели «Требовать Shift / Ctrl / Alt» ниже задают модификатор, который нужно удерживать при нажатии.
+$NE_RequireShift	Требовать Shift
+$NE_RequireCtrl	Требовать Ctrl
+$NE_RequireAlt	Требовать Alt
+$NE_LanguageHeader	Язык
+$NE_Language	Язык
+$NE_Language_Help	Язык, на котором пишет NarrativeEngine: письма, воспоминания, слухи и панель. «Авто» — язык самой игры. Изменение вступит в силу при следующем запуске игры.
+$NE_Language_Auto	Авто
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski
+$NE_Language_russian	Русский
+$NE_Language_japanese	Японский
+$NE_Language_chinese	Китайский

@@ -9,6 +9,8 @@
 #include <GossipSpies.h>
 #include <GossipThread.h>
 #include <GossipWorld.h>
+#include <Localization.h>
+#include <ShippedLanguage.h>
 #include <SkyrimNetAPI.h>
 #include <ThreadRole.h>
 
@@ -273,6 +275,63 @@ TEST_CASE("GossipContent frames how a listener remembers hearing it", "[GossipCo
             // have.
             const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
             REQUIRE(heard == "My sister Hulda told me this: " + kBand);
+        }
+    }
+
+    SECTION("when the two are parent and child")
+    {
+        auto* teller = RE::TESForm::LookupByID<RE::TESNPC>(kHulda);
+        auto* listener = RE::TESForm::LookupByID<RE::TESNPC>(kYsolda);
+        REQUIRE(teller != nullptr);
+        REQUIRE(listener != nullptr);
+        // The listener is the record's parent side and the teller its child.
+        engine.AddRelationship(listener, teller, "father", "mother", "son", "daughter");
+
+        SECTION("should name what the teller is to the listener")
+        {
+            // The memory is the listener's: Hulda is Ysolda's daughter, so it
+            // is "my daughter Hulda". Reading the listener's own row instead
+            // would make her "my mother Hulda".
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
+            REQUIRE(heard == "My daughter Hulda told me this: " + kBand);
+        }
+    }
+
+    SECTION("when the relationship is one the language file words")
+    {
+        auto* teller = RE::TESForm::LookupByID<RE::TESNPC>(kHulda);
+        auto* listener = RE::TESForm::LookupByID<RE::TESNPC>(kYsolda);
+        REQUIRE(teller != nullptr);
+        REQUIRE(listener != nullptr);
+        // The game's own words, capitalized as its record has them.
+        auto* type = engine.AddRelationship(listener, teller, "Father", "Mother", "Son", "Daughter");
+        engine.SetEditorIDOf(type, "ParentChild");
+
+        SECTION("should take the language file's word over the record's")
+        {
+            // english.ini's [Data.Kin] ParentChild.child.female.
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
+            REQUIRE(heard == "My daughter Hulda told me this: " + kBand);
+        }
+
+        SECTION("should take a row refined by the listener's sex over the plain one")
+        {
+            // Some languages word a tie by who speaks of it. Ysolda, the
+            // listener, is a woman, so her row wins; a man's would not.
+            namespace Localization = NarrativeEngine::Localization;
+            using NarrativeEngine::Testing::ShippedEnglish;
+            using NarrativeEngine::Testing::Synthetic;
+            Localization::Publish(Synthetic("xx",
+                                            "",
+                                            "",
+                                            "[Data.Kin]\n"
+                                            "ParentChild.child.female = plain\n"
+                                            "ParentChild.child.female.listener_male = his\n"
+                                            "ParentChild.child.female.listener_female = hers\n"),
+                                  ShippedEnglish());
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
+            Localization::Publish(ShippedEnglish(), ShippedEnglish());
+            REQUIRE(heard == "My hers Hulda told me this: " + kBand);
         }
     }
 

@@ -111,37 +111,6 @@ TEST_CASE("CharacterBioResolver::Slug", "[CharacterBioResolver][BioName]")
     }
 }
 
-TEST_CASE("CharacterBioResolver::RepairWindows1252", "[CharacterBioResolver][BioName]")
-{
-    SECTION("leaves valid UTF-8 alone")
-    {
-        CHECK(RepairWindows1252("Fl\xC3\xBC"
-                                "chtling")
-              == "Fl\xC3\xBC"
-                 "chtling");
-    }
-    SECTION("re-encodes a Latin-1 byte")
-    {
-        CHECK(RepairWindows1252("Fl\xFC"
-                                "chtling")
-              == "Fl\xC3\xBC"
-                 "chtling");
-    }
-    SECTION("re-encodes 0x80-0x9F through the code page")
-    {
-        // 0x92 is Windows-1252's right single quote, U+2019.
-        CHECK(RepairWindows1252("Alik\x92r") == "Alik\xE2\x80\x99r");
-    }
-    SECTION("keeps valid sequences beside a repaired byte")
-    {
-        CHECK(RepairWindows1252("\xC3\xA9\xE9") == "\xC3\xA9\xC3\xA9");
-    }
-    SECTION("treats a truncated sequence as single bytes")
-    {
-        CHECK(RepairWindows1252("a\xC3") == "a\xC3\x83");
-    }
-}
-
 TEST_CASE("CharacterBioResolver::LocalId and UniqueKey", "[CharacterBioResolver][BioName]")
 {
     CHECK(LocalId(0x00019DDC) == 0x019DDC);

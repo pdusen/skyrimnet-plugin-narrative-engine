@@ -1,4 +1,5 @@
 #include <BeatSystem.h>
+#include <Localization.h>
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
@@ -126,10 +127,6 @@ namespace
         std::string Name() const override
         {
             return name_;
-        }
-        std::string Description() const override
-        {
-            return "A fake beat, for the beat system's benefit.";
         }
         BeatPolarity Polarity() const override
         {
@@ -276,7 +273,8 @@ namespace
     std::string SelectedBeat()
     {
         const auto tail = DecisionLog::Tail(1);
-        return tail.empty() ? std::string{} : tail.front().beatSelected;
+        return tail.empty() ? std::string{}
+                            : DecisionLog::ActionText(tail.front(), NarrativeEngine::Localization::Get());
     }
 } // namespace
 
@@ -543,7 +541,9 @@ TEST_CASE("BeatSystem picks a beat once the gates are clear", "[BeatSystem][engi
             // sample; a model that misses twice is not worth a third call.
             REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
             REQUIRE(FakeLLM().sendPromptCalls == 2);
-            REQUIRE(SelectedBeat().starts_with("(failed"));
+            CHECK(SelectedBeat()
+                  == "(failed: LLM picked an option it was not offered on every attempt (last: unknown beat "
+                     "'fake_not_offered'))");
         }
     }
 
@@ -929,7 +929,9 @@ TEST_CASE("BeatSystem hands a sender beat the memory the Director chose", "[Beat
         {
             REQUIRE(FakeLLM().sendPromptCalls == 2);
             REQUIRE(beat->starts.load() == 0);
-            REQUIRE(SelectedBeat().starts_with("(failed"));
+            CHECK(SelectedBeat()
+                  == "(failed: LLM picked an option it was not offered on every attempt (last: sender 0x1A6FF "
+                     "was not offered for this beat))");
         }
     }
 

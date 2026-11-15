@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 // Tests for who a plot step may be given to.
@@ -273,5 +274,64 @@ TEST_CASE("PlotCasting crafting agents", "[PlotCasting][engine]")
             REQUIRE(cast.considered[0].npc == kSubordinate);
             REQUIRE(cast.considered[0].reject == PlotCasting::Reject::Occupied);
         }
+    }
+}
+
+TEST_CASE("PlotCasting keeps the people a step names from carrying it out", "[PlotCasting][engine]")
+{
+    // Every one of them tied to the mastermind and below them in their
+    // faction, so each is a tied subordinate and only the step's words can
+    // keep them off the ladder.
+    constexpr RE::FormID kVeleth = 0x00030001;
+    constexpr RE::FormID kOthreloth = 0x00030002;
+    constexpr RE::FormID kAsgeir = 0x00030003;
+    constexpr RE::FormID kRyan = 0x00030004;
+    Fixture f;
+    f.population.members.clear();
+    auto boss = Person(kBoss, "Olfrid");
+    for (const auto npc : {kVeleth, kOthreloth, kAsgeir, kRyan}) {
+        boss.ties.push_back({npc, true, 0});
+    }
+    boss.factions.push_back({kFaction, 1.0, true});
+    f.population.members.push_back(boss);
+    for (const auto& [npc, name] : {std::pair{kVeleth, "Captain Veleth"},
+                                    std::pair{kOthreloth, "Elder Othreloth"},
+                                    std::pair{kAsgeir, "Asgeir Snow-Shod"},
+                                    std::pair{kRyan, "Ryan Lod"}}) {
+        auto member = Person(npc, name);
+        member.factions.push_back({kFaction, 0.5, true});
+        f.population.members.push_back(member);
+    }
+    // Whether `npc` may carry out the step `text` describes.
+    const auto may = [&f](RE::FormID npc, const char* text) {
+        return PlotCasting::QualifyAgent(f.population, kBoss, npc, text, 0, f.occupancy, kToday, {}, {}).Eligible();
+    };
+    // Each of the four may carry out a step that names none of them.
+    REQUIRE(may(kVeleth, "Watch the market"));
+    REQUIRE(may(kOthreloth, "Watch the market"));
+    REQUIRE(may(kAsgeir, "Watch the market"));
+    REQUIRE(may(kRyan, "Watch the market"));
+
+    SECTION("a name, or a word of it, is the person, possessive or in any case")
+    {
+        CHECK_FALSE(may(kVeleth, "Watch Captain Veleth's movements"));
+        CHECK_FALSE(may(kAsgeir, "Watch Asgeir and Vittoria at the Bee and Barb"));
+        CHECK_FALSE(may(kAsgeir, "Search the Snow-Shod's farm"));
+        CHECK_FALSE(may(kAsgeir, "watch asgeir"));
+        CHECK_FALSE(may(kRyan, "Watch Ryan"));
+    }
+
+    SECTION("a title alone names nobody")
+    {
+        CHECK(may(kOthreloth, "Ask the elder, then the captain"));
+        CHECK(may(kVeleth, "Ask the elder, then the captain"));
+    }
+
+    SECTION("a name inside a longer word, or a short word of a name, does not")
+    {
+        CHECK(may(kVeleth, "Watch Velethia"));
+        CHECK(may(kAsgeir, "Find an Asgeir-like groom"));
+        CHECK(may(kRyan, "Watch O'Ryan"));
+        CHECK(may(kRyan, "Watch Lod"));
     }
 }

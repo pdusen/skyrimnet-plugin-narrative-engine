@@ -11,11 +11,14 @@
 //
 // The plot is the one the prompt was designed around: Arcadia wants the
 // Bannered Mare, sent Ysolda to ask about Hulda and lost that, has Saadia
-// spreading talk now, and still has the deed to take. Every sentence is
-// asserted whole, because the reader is a model that will take each word at
-// face value: telling an agent the scheme, or a mastermind that they sent
-// somebody they did not, is a person in Skyrim acting on a thing that is
-// not so.
+// spreading talk now, and still has the deed to take.
+//
+// What a person is told is a record, which plot_awareness.prompt words; these
+// cases check what each record says, and the render comparison checks how it
+// reads. It matters to the word, because the reader is a model that will take
+// each one at face value: telling an agent the scheme, or a mastermind that
+// they sent somebody they did not, is a person in Skyrim acting on a thing
+// that is not so.
 
 namespace
 {
@@ -92,29 +95,42 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should tell the mastermind the scheme and every step of it, in order")
         {
-            REQUIRE(PlotAwareness::Describe(state, kBoss)
-                    == "You currently have a plot in motion to take the Bannered Mare from Hulda. The plot has the "
-                       "following steps:\n"
-                       "\n"
-                       "1. You sent Ysolda to ask around Whiterun about Hulda, but it went wrong and you had to "
-                       "regroup.\n"
-                       "2. You have sent Saadia to spread ugly talk about Hulda around Whiterun. This is currently "
-                       "in progress.\n"
-                       "3. You need to send someone to steal the deed to the Bannered Mare from Hulda.");
+            const auto told = PlotAwareness::Describe(state, kBoss);
+            REQUIRE(told["role"] == "mastermind");
+            REQUIRE(told["scheme"] == "take the Bannered Mare from Hulda");
+            REQUIRE(told["alone"] == false);
+            const auto& steps = told["steps"];
+            REQUIRE(steps.size() == 3);
+            CHECK(steps[0]["state"] == "done");
+            CHECK(steps[0]["outcome"] == "failed_caught");
+            CHECK(steps[0]["self"] == false);
+            CHECK(steps[0]["agent"] == "Ysolda");
+            CHECK(steps[0]["task"]["verb"] == "ask_around");
+            CHECK(steps[0]["task"]["fill"]["place"] == "Whiterun");
+            CHECK(steps[1]["state"] == "in_progress");
+            CHECK(steps[1]["agent"] == "Saadia");
+            CHECK(steps[1]["task"]["verb"] == "spread_rumors");
+            CHECK(steps[2]["state"] == "todo");
+            CHECK(steps[2]["outcome"] == "");
+            CHECK(steps[2]["agent"] == "");
+            CHECK(steps[2]["task"]["verb"] == "steal");
+            CHECK(steps[2]["task"]["fill"]["item"] == "the deed to the Bannered Mare");
         }
 
         SECTION("should tell the agent only their errand and who sent them")
         {
-            REQUIRE(PlotAwareness::Describe(state, kSaadia)
-                    == "You have been sent by Arcadia to spread ugly talk about Hulda around Whiterun. You're in the "
-                       "process of doing that now.");
+            const auto told = PlotAwareness::Describe(state, kSaadia);
+            REQUIRE(told["role"] == "agent");
+            REQUIRE(told["sender"] == "Arcadia");
+            REQUIRE(told["task"]["verb"] == "spread_rumors");
+            REQUIRE_FALSE(told.contains("scheme"));
         }
 
         SECTION("should tell an agent whose errand is over nothing")
         {
             // Ysolda's step ended and released her; what she did is in her
             // memories, and she is in no plot now.
-            REQUIRE(PlotAwareness::Describe(state, kYsolda).empty());
+            REQUIRE(PlotAwareness::Describe(state, kYsolda).is_null());
         }
     }
 
@@ -124,13 +140,11 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should say they did each, and that the rest is theirs to do too")
         {
-            REQUIRE(PlotAwareness::Describe(state, kBoss)
-                    == "You currently have a plot in motion to take the Bannered Mare from Hulda. The plot has the "
-                       "following steps:\n"
-                       "\n"
-                       "1. You set out to ask around Whiterun about Hulda, but it went wrong and you had to regroup.\n"
-                       "2. You are currently trying to spread ugly talk about Hulda around Whiterun.\n"
-                       "3. You need to steal the deed to the Bannered Mare from Hulda.");
+            const auto told = PlotAwareness::Describe(state, kBoss);
+            REQUIRE(told["alone"] == true);
+            REQUIRE(told["steps"][0]["self"] == true);
+            REQUIRE(told["steps"][1]["self"] == true);
+            REQUIRE(told["steps"][1]["state"] == "in_progress");
         }
     }
 
@@ -140,10 +154,7 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should say that time ran out, not that it went wrong")
         {
-            REQUIRE(PlotAwareness::Describe(state, kBoss)
-                        .find("1. You sent Ysolda to ask around Whiterun about Hulda, but they ran out of time and you "
-                              "had to regroup.\n")
-                    != std::string::npos);
+            REQUIRE(PlotAwareness::Describe(state, kBoss)["steps"][0]["outcome"] == "failed_timeout");
         }
     }
 
@@ -153,9 +164,7 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should say so, with no regrouping")
         {
-            REQUIRE(PlotAwareness::Describe(state, kBoss)
-                        .find("1. You sent Ysolda to ask around Whiterun about Hulda, and they succeeded.\n")
-                    != std::string::npos);
+            REQUIRE(PlotAwareness::Describe(state, kBoss)["steps"][0]["outcome"] == "succeeded");
         }
     }
 
@@ -164,13 +173,10 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
         auto state = World(kYsolda, kSaadia);
         state.plots[0].plan[0] = Live(Step("win_over", kSaadia, "Saadia"));
 
-        SECTION("should give the mastermind their own side and the agent the mastermind's")
+        SECTION("should give both the same task, for each to be told from their own side")
         {
-            REQUIRE(PlotAwareness::Describe(state, kBoss).find("Saadia to win Hulda over to your side.")
-                    != std::string::npos);
-            REQUIRE(PlotAwareness::Describe(state, kSaadia)
-                    == "You have been sent by Arcadia to win Hulda over to their side. You're in the process of "
-                       "doing that now.");
+            REQUIRE(PlotAwareness::Describe(state, kBoss)["steps"][1]["task"]["verb"] == "win_over");
+            REQUIRE(PlotAwareness::Describe(state, kSaadia)["task"]["verb"] == "win_over");
         }
     }
 
@@ -180,8 +186,8 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should say nothing")
         {
-            REQUIRE(PlotAwareness::Describe(state, kStranger).empty());
-            REQUIRE(PlotAwareness::Describe(state, 0).empty());
+            REQUIRE(PlotAwareness::Describe(state, kStranger).is_null());
+            REQUIRE(PlotAwareness::Describe(state, 0).is_null());
         }
     }
 
@@ -192,8 +198,8 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should say nothing to anybody, even before they are released")
         {
-            REQUIRE(PlotAwareness::Describe(state, kBoss).empty());
-            REQUIRE(PlotAwareness::Describe(state, kSaadia).empty());
+            REQUIRE(PlotAwareness::Describe(state, kBoss).is_null());
+            REQUIRE(PlotAwareness::Describe(state, kSaadia).is_null());
         }
     }
 
@@ -204,7 +210,7 @@ TEST_CASE("PlotAwareness::Describe", "[PlotAwareness][engine]")
 
         SECTION("should tell them nothing rather than another person's errand")
         {
-            REQUIRE(PlotAwareness::Describe(state, kStranger).empty());
+            REQUIRE(PlotAwareness::Describe(state, kStranger).is_null());
         }
     }
 }

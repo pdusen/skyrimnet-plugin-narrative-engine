@@ -1,5 +1,10 @@
 #include <PlotCandidates.h>
 
+#include <Localization.h>
+#include <PlotText.h>
+#include <TextMatch.h>
+#include <TextUtf8.h>
+
 #include <algorithm>
 #include <cctype>
 #include <format>
@@ -34,39 +39,43 @@ namespace NarrativeEngine::PlotCandidates
             std::unordered_set<RE::FormID> named;
         };
 
-        // The words of a text, each a run of letters, digits, hyphens and
-        // apostrophes, with a trailing possessive dropped: "Hulda's" is
-        // "Hulda", and "Ri'saad" stays whole.
-        std::vector<std::string> Words(std::string_view text)
+        const LanguageTable::Table& TableOf(const Request& request)
         {
-            std::vector<std::string> out;
-            std::string word;
-            const auto flush = [&] {
-                if (word.ends_with("'s")) {
-                    word.resize(word.size() - 2);
-                }
-                while (!word.empty() && (word.back() == '\'' || word.back() == '-')) {
-                    word.pop_back();
-                }
-                while (!word.empty() && (word.front() == '\'' || word.front() == '-')) {
-                    word.erase(word.begin());
-                }
-                if (!word.empty()) {
-                    out.push_back(std::move(word));
-                }
-                word.clear();
-            };
-            for (const char ch : text) {
-                const auto u = static_cast<unsigned char>(ch);
-                if (std::isalnum(u) != 0 || ch == '-' || ch == '\'') {
-                    word.push_back(ch);
-                } else {
-                    flush();
-                }
-            }
-            flush();
-            return out;
+            return request.table != nullptr ? *request.table : Localization::Get();
         }
+
+        // Whether `text` says the name word `word`, by `table`'s rules: as a
+        // word of it, bare or with one of the language's name endings, or,
+        // in a script that does not separate words, anywhere in it. Case
+        // matters: "hulda" is not a name.
+        class NameReader
+        {
+        public:
+            NameReader(std::string_view text, const LanguageTable::Table& table)
+                : text_(text), words_(TextUtf8::Words(text)), suffixes_(table.Matching().List("Name.Suffixes")),
+                  separated_(table.Matching().options.wordSeparated)
+            {}
+
+            [[nodiscard]] bool operator()(std::string_view word) const
+            {
+                if (!separated_) {
+                    return text_.find(word) != std::string_view::npos;
+                }
+                return std::ranges::any_of(
+                    words_, [&](std::string_view said) { return TextMatch::IsNameWord(said, word, suffixes_); });
+            }
+
+            [[nodiscard]] bool Empty() const noexcept
+            {
+                return words_.empty();
+            }
+
+        private:
+            std::string_view text_;
+            std::vector<std::string_view> words_;
+            std::vector<std::string> suffixes_;
+            bool separated_ = true;
+        };
 
         const PlotModel::SlotValue* Filled(const Request& request, std::string_view name)
         {
@@ -179,28 +188,19 @@ namespace NarrativeEngine::PlotCandidates
             });
         }
 
-        std::string PersonLine(const Request& request, const Ranked& r)
+        Why WhyOf(const Request& request, const Ranked& r)
         {
-            std::string line = r.member->name;
+            Why why;
             if (request.occupation) {
-                const auto what = request.occupation(r.member->npc);
-                if (!what.empty()) {
-                    line += ", " + what;
-                }
+                why.occupation = request.occupation(r.member->npc);
             }
-            std::string why;
             if (r.rank < kStranger) {
-                why = PlotMenus::RelationPhrase(static_cast<PlotMenus::Relation>(r.rank));
-            } else if (const auto where = SettlementName(request, r.member->settlement); !where.empty()) {
-                why = std::format("lives in {}", where);
+                why.relation = PlotMenus::RelationId(static_cast<PlotMenus::Relation>(r.rank));
+            } else {
+                why.lives = SettlementName(request, r.member->settlement);
             }
-            if (r.named) {
-                why = why.empty() ? std::string{"named in the scheme"} : why + "; named in the scheme";
-            }
-            if (!why.empty()) {
-                line += std::format(" ({})", why);
-            }
-            return line;
+            why.named = r.named;
+            return why;
         }
 
         std::vector<Candidate> Keyed(std::vector<Candidate> list, std::size_t cap)
@@ -221,8 +221,7 @@ namespace NarrativeEngine::PlotCandidates
         {
             std::vector<Candidate> out;
             for (const auto& r : ranked) {
-                out.push_back(
-                    {{}, {std::string{slot.name}, r.member->npc, r.member->name}, PersonLine(ctx.request, r)});
+                out.push_back({{}, {std::string{slot.name}, r.member->npc, r.member->name}, WhyOf(ctx.request, r)});
             }
             return Keyed(std::move(out), cap);
         }
@@ -296,7 +295,7 @@ namespace NarrativeEngine::PlotCandidates
                 if (name.empty()) {
                     continue;
                 }
-                out.push_back({{}, {std::string{slot.name}, settlement, name}, name});
+                out.push_back({{}, {std::string{slot.name}, settlement, name}, {}});
             }
             return Keyed(std::move(out), cap);
         }
@@ -389,27 +388,24 @@ namespace NarrativeEngine::PlotCandidates
             return out;
         }
 
-        std::string Lowered(std::string_view text)
-        {
-            std::string out(text);
-            std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
-                return static_cast<char>(std::tolower(c));
-            });
-            return out;
-        }
-
         // Whether `text` says this thing, its article aside and in any case:
         // a finish that brings "a gold diamond necklace" names "a Gold
-        // Diamond Necklace".
-        bool Says(std::string_view text, std::string_view displayName)
+        // Diamond Necklace". The articles are the language's [Matching]
+        // Item.Articles, the words a thing's name may open with: followed by
+        // a space, in a script that separates words, and straight on in one
+        // that does not (Chinese "一袋金幣"), or straight on after an
+        // apostrophe (Italian "un'Ascia").
+        bool Says(std::string_view text, std::string_view displayName, const LanguageTable::Table& table)
         {
-            for (const std::string_view article : {"a sheaf of ", "an ", "a "}) {
-                if (displayName.starts_with(article)) {
-                    displayName.remove_prefix(article.size());
+            const auto& rules = table.Matching();
+            for (const auto& article : rules.List("Item.Articles")) {
+                const auto opening = rules.options.wordSeparated && !article.ends_with('\'') ? article + " " : article;
+                if (displayName.size() > opening.size() && displayName.starts_with(opening)) {
+                    displayName.remove_prefix(opening.size());
                     break;
                 }
             }
-            return !displayName.empty() && Lowered(text).find(Lowered(displayName)) != std::string::npos;
+            return !displayName.empty() && TextUtf8::Fold(text).find(TextUtf8::Fold(displayName)) != std::string::npos;
         }
 
         // Up to `count` of `recipes`, evenly spaced from the cheapest to the
@@ -440,7 +436,7 @@ namespace NarrativeEngine::PlotCandidates
 
         Candidate Thing(const PlotVerbs::Slot& slot, RE::FormID form, const std::string& text)
         {
-            return {{}, {std::string{slot.name}, form, text}, text};
+            return {{}, {std::string{slot.name}, form, text}, {}};
         }
 
         // A list of made things: the ones `naming` says first, then a spread
@@ -453,7 +449,7 @@ namespace NarrativeEngine::PlotCandidates
             std::vector<const PlotRecipes::Recipe*> named;
             std::vector<const PlotRecipes::Recipe*> rest;
             for (const auto* recipe : recipes) {
-                (Says(request.naming, recipe->displayName) ? named : rest).push_back(recipe);
+                (Says(request.naming, recipe->displayName, TableOf(request)) ? named : rest).push_back(recipe);
             }
             std::vector<Candidate> out;
             for (const auto* recipe : named) {
@@ -485,7 +481,7 @@ namespace NarrativeEngine::PlotCandidates
                     if (pooled.contains(recipe->form)) {
                         continue;
                     }
-                    if (Says(request.naming, recipe->displayName)) {
+                    if (Says(request.naming, recipe->displayName, TableOf(request))) {
                         out.push_back(Thing(slot, recipe->form, recipe->displayName));
                     } else {
                         unnamed.push_back(recipe);
@@ -514,11 +510,6 @@ namespace NarrativeEngine::PlotCandidates
                                 static_cast<std::size_t>(-1),
                                 static_cast<std::size_t>(-1)};
 
-        bool Capitalised(const std::string& word)
-        {
-            return !word.empty() && std::isupper(static_cast<unsigned char>(word.front())) != 0;
-        }
-
         // Which of `names` `text` names most surely, among those `eligible`
         // admits. Each word a name shares with the text counts one over the
         // number of names carrying it, so "Grelod" says Grelod the Kind --
@@ -529,15 +520,17 @@ namespace NarrativeEngine::PlotCandidates
         template <typename Eligible>
         std::vector<std::size_t> Closest(const std::vector<std::string_view>& names,
                                          std::string_view text,
-                                         Eligible eligible)
+                                         Eligible eligible,
+                                         const LanguageTable::Table& table)
         {
-            const auto said = Words(text);
-            const std::unordered_set<std::string> words(said.begin(), said.end());
-            const auto shared = [&words](std::string_view name) {
+            const NameReader says{text, table};
+            // A name's words the text says, each counted only where it reads
+            // as the start of a name: a capital in a cased script.
+            const auto shared = [&says](std::string_view name) {
                 std::unordered_set<std::string> out;
-                for (auto& word : Words(name)) {
-                    if (Capitalised(word) && words.contains(word)) {
-                        out.insert(std::move(word));
+                for (const auto word : TextUtf8::Words(name)) {
+                    if (TextMatch::StartsName(word) && says(word)) {
+                        out.emplace(word);
                     }
                 }
                 return out;
@@ -579,11 +572,14 @@ namespace NarrativeEngine::PlotCandidates
         // Who a person role's words name: the living people they name most
         // surely, and when there are none, why -- for the refusal -- and what
         // to tell the retry when the words name nobody at all.
+        // Whom a role's words name among the living, or, when nobody, why not:
+        // a code with its arguments, short of the role and what it admits,
+        // which ResolveRoles adds.
         struct Called
         {
             std::vector<const PlotCasting::Member*> living;
-            std::string why;
-            std::string hint;
+            PlotRejection::Code why = PlotRejection::Code::None;
+            nlohmann::json args = nlohmann::json::object();
         };
 
         Called PeopleCalled(const Request& request, std::string_view text)
@@ -596,9 +592,25 @@ namespace NarrativeEngine::PlotCandidates
             const auto lives = [&request](RE::FormID npc) { return !request.alive || request.alive(npc); };
 
             Called out;
-            for (const auto i : Closest(names, text, [&](std::size_t k) {
-                     return members[k].npc != request.mastermind && lives(members[k].npc);
-                 })) {
+            // A role holding somebody's whole name, as the prompt asks, names
+            // them, whatever a part of it also says. In a script written
+            // without spaces a name part is found as a run of characters, and
+            // "Bor" was found inside "Olfrid Battle-Born": a tie, refused as
+            // ambiguous, for a name copied letter for letter. The text arrives
+            // sanitized, so already trimmed.
+            for (const auto& member : members) {
+                if (member.name == text && member.npc != request.mastermind && lives(member.npc)) {
+                    out.living.push_back(&member);
+                }
+            }
+            if (!out.living.empty()) {
+                return out;
+            }
+            for (const auto i : Closest(
+                     names,
+                     text,
+                     [&](std::size_t k) { return members[k].npc != request.mastermind && lives(members[k].npc); },
+                     TableOf(request))) {
                 out.living.push_back(&members[i]);
             }
             if (!out.living.empty()) {
@@ -607,11 +619,11 @@ namespace NarrativeEngine::PlotCandidates
 
             // The mastermind, who is left out of every role of their own
             // scheme. Without this they were said to be nobody in Skyrim.
-            if (const auto self =
-                    Closest(names, text, [&](std::size_t k) { return members[k].npc == request.mastermind; });
+            if (const auto self = Closest(
+                    names, text, [&](std::size_t k) { return members[k].npc == request.mastermind; }, TableOf(request));
                 !self.empty()) {
-                out.why =
-                    std::format("{} is the one scheming and cannot be in their own scheme", members[self.front()].name);
+                out.why = PlotRejection::Code::RoleIsMastermind;
+                out.args = {{"who", members[self.front()].name}};
                 return out;
             }
 
@@ -620,9 +632,11 @@ namespace NarrativeEngine::PlotCandidates
             if (const auto gone = Closest(
                     names,
                     text,
-                    [&](std::size_t k) { return members[k].npc != request.mastermind && !lives(members[k].npc); });
+                    [&](std::size_t k) { return members[k].npc != request.mastermind && !lives(members[k].npc); },
+                    TableOf(request));
                 !gone.empty()) {
-                out.why = std::format("{} is dead or not in the world", members[gone.front()].name);
+                out.why = PlotRejection::Code::RoleDead;
+                out.args = {{"who", members[gone.front()].name}};
                 return out;
             }
             const auto& absent = request.population.absent;
@@ -630,15 +644,44 @@ namespace NarrativeEngine::PlotCandidates
             for (const auto& a : absent) {
                 absentNames.emplace_back(a.name);
             }
-            if (const auto left = Closest(absentNames, text, [](std::size_t) { return true; }); !left.empty()) {
+            if (const auto left = Closest(
+                    absentNames, text, [](std::size_t) { return true; }, TableOf(request));
+                !left.empty()) {
                 const auto& a = absent[left.front()];
-                out.why = std::format("{} cannot take part in these plots ({})", a.name, a.reason);
+                out.why = PlotRejection::Code::RoleLeftOut;
+                out.args = {{"who", a.name}, {"why", a.reason}};
                 return out;
             }
             // Most often a company, a family or a court named as if it were
             // somebody: "the East Empire Company", "Honningbrew Meadery".
-            out.why = std::format("'{}' names nobody in Skyrim", text);
-            out.hint = "; a person's role takes one person's name, never a group's or a place's";
+            out.why = PlotRejection::Code::RoleNamesNobody;
+            out.args = {{"text", text}};
+            return out;
+        }
+
+        // `text`'s words, folded, each without a name ending the language
+        // lists, and joined by single spaces with one at either end: what a
+        // place's name is looked for in as a run of whole words. In a script
+        // that does not separate words, the folded text itself.
+        std::string Spoken(std::string_view text, const LanguageTable::Table& table)
+        {
+            const auto& rules = table.Matching();
+            if (!rules.options.wordSeparated) {
+                return TextUtf8::Fold(text);
+            }
+            const auto suffixes = rules.List("Name.Suffixes");
+            std::string out = " ";
+            for (const auto word : TextUtf8::Words(text)) {
+                auto folded = TextUtf8::Fold(word);
+                for (const auto& suffix : suffixes) {
+                    const auto ending = TextUtf8::Fold(suffix);
+                    if (!ending.empty() && folded.size() > ending.size() && folded.ends_with(ending)) {
+                        folded.resize(folded.size() - ending.size());
+                        break;
+                    }
+                }
+                out += folded + " ";
+            }
             return out;
         }
 
@@ -646,15 +689,16 @@ namespace NarrativeEngine::PlotCandidates
         // name where several do: "the Markarth marketplace" is Markarth.
         const PlotMenus::LocationOption* PlaceCalled(const Request& request, std::string_view text)
         {
-            std::string said;
-            for (const auto& word : Words(text)) {
-                said += " " + Lowered(word);
-            }
-            said += " ";
+            const auto& table = TableOf(request);
+            const auto said = Spoken(text, table);
             const PlotMenus::LocationOption* out = nullptr;
             for (const auto& place : request.world.settlements) {
-                const auto name = std::format(" {} ", Lowered(place.name));
-                if (said.find(name) != std::string::npos && (out == nullptr || place.name.size() > out->name.size())) {
+                auto name = Spoken(place.name, table);
+                if (!table.Matching().options.wordSeparated) {
+                    name = TextUtf8::Fold(place.name);
+                }
+                if (!name.empty() && name != " " && said.find(name) != std::string::npos
+                    && (out == nullptr || place.name.size() > out->name.size())) {
                     out = &place;
                 }
             }
@@ -677,19 +721,36 @@ namespace NarrativeEngine::PlotCandidates
         // Who or what a rule admits, as the retry is told it, so a refused
         // role always comes with something to choose instead: the whole list
         // when it is short enough to read, else its first few, which are the
-        // ones the mastermind is closest to as the rule ranks them.
-        std::string Admitted(const std::vector<Candidate>& list)
+        // ones the mastermind is closest to as the rule ranks them. `more`
+        // says the list was cut.
+        nlohmann::json Admitted(const std::vector<Candidate>& list)
         {
-            if (list.empty()) {
-                return "; nobody this plot can reach can be";
-            }
             constexpr std::size_t kReadable = 8;
-            const auto shown = std::min(list.size(), kReadable);
-            std::string out = list.size() > kReadable ? "; it could be, among others, " : "; it can be ";
-            for (std::size_t i = 0; i < shown; ++i) {
-                out += (i == 0 ? "" : i + 1 == shown ? " or " : ", ") + list[i].value.text;
+            nlohmann::json names = nlohmann::json::array();
+            for (std::size_t i = 0; i < std::min(list.size(), kReadable); ++i) {
+                names.push_back(list[i].value.text);
             }
-            return out;
+            return {{"names", std::move(names)}, {"more", list.size() > kReadable}};
+        }
+
+        // Whether `text` is written in an alphabet none of `list` is: a name
+        // the model transliterated ("Кьяр" for Kjar) rather than one nobody
+        // has. A text sharing an alphabet with any of them is not.
+        bool InAnotherAlphabet(std::string_view text, const std::vector<Candidate>& list)
+        {
+            const auto said = TextUtf8::Scripts(text);
+            return said != 0 && !list.empty() && std::none_of(list.begin(), list.end(), [said](const Candidate& c) {
+                       return (TextUtf8::Scripts(c.value.text) & said) != 0;
+                   });
+        }
+
+        PlotRejection::Rejection Problem(PlotRejection::Code code,
+                                         const PlotVerbs::Verb& goal,
+                                         const PlotVerbs::Slot& slot,
+                                         nlohmann::json args = nlohmann::json::object())
+        {
+            args["role"] = PlotRejection::Role(goal.id, slot.name);
+            return PlotRejection::Make(code, std::move(args));
         }
     } // namespace
 
@@ -698,16 +759,15 @@ namespace NarrativeEngine::PlotCandidates
                             const Request& request)
     {
         Resolution out;
-        std::vector<std::string> problems;
+        auto& problems = out.problems;
         bool markLost = false;
 
         for (std::size_t i = 0; i < goal.slotCount; ++i) {
             const auto& slot = goal.slots[i];
-            const auto role = std::format("the {} ({})", slot.name, slot.says);
             const auto given =
                 std::find_if(named.begin(), named.end(), [&slot](const auto& v) { return v.name == slot.name; });
             if (given == named.end() || given->text.empty()) {
-                problems.push_back(std::format("nothing was named as {}", role));
+                problems.push_back(Problem(PlotRejection::Code::RoleUnnamed, goal, slot));
                 markLost = markLost || slot.name == "mark";
                 continue;
             }
@@ -719,13 +779,14 @@ namespace NarrativeEngine::PlotCandidates
             // Judged as planning would fill it, against what is resolved so
             // far. An item an earlier step will get is chosen from the pool
             // and from what can be made, as planning chooses one.
-            const Request here{request.population,
-                               request.mastermind,
-                               request.world,
-                               out.values,
-                               request.earlier,
-                               request.alive,
-                               request.occupation};
+            Request here{request.population,
+                         request.mastermind,
+                         request.world,
+                         out.values,
+                         request.earlier,
+                         request.alive,
+                         request.occupation};
+            here.table = request.table;
             auto judged = slot;
             if (judged.rule == Rule::BoundItem) {
                 judged.rule = Rule::PoolOrMade;
@@ -742,22 +803,33 @@ namespace NarrativeEngine::PlotCandidates
                 }
                 const auto called = PeopleCalled(here, text);
                 if (called.living.empty()) {
-                    problems.push_back(std::format("{}, for {}{}{}", called.why, role, Admitted(list), called.hint));
+                    auto args = called.args;
+                    args["admitted"] = Admitted(list);
+                    if (called.why == PlotRejection::Code::RoleNamesNobody && InAnotherAlphabet(text, list)) {
+                        args["alphabet"] = true;
+                    }
+                    problems.push_back(Problem(called.why, goal, slot, std::move(args)));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }
                 if (called.living.size() > 1) {
-                    std::string who;
-                    for (std::size_t k = 0; k < called.living.size(); ++k) {
-                        who += (k == 0 ? "" : k + 1 == called.living.size() ? " or " : ", ") + called.living[k]->name;
+                    nlohmann::json people = nlohmann::json::array();
+                    for (const auto* member : called.living) {
+                        people.push_back(member->name);
                     }
-                    problems.push_back(std::format("'{}' could be {}; give the whole name, for {}", text, who, role));
+                    problems.push_back(Problem(PlotRejection::Code::RoleAmbiguous,
+                                               goal,
+                                               slot,
+                                               {{"text", text}, {"people", std::move(people)}}));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }
                 const auto& who = *called.living.front();
                 if (!Lists(list, who.npc)) {
-                    problems.push_back(std::format("{} cannot be {}{}", who.name, role, Admitted(list)));
+                    problems.push_back(Problem(PlotRejection::Code::RoleNotAdmitted,
+                                               goal,
+                                               slot,
+                                               {{"who", who.name}, {"admitted", Admitted(list)}}));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }
@@ -767,11 +839,15 @@ namespace NarrativeEngine::PlotCandidates
             case PlotVerbs::SlotKind::Place: {
                 const auto* place = PlaceCalled(here, text);
                 if (place == nullptr) {
-                    problems.push_back(std::format("'{}' names no settlement, for {}{}", text, role, Admitted(list)));
+                    problems.push_back(Problem(
+                        PlotRejection::Code::PlaceUnknown, goal, slot, {{"text", text}, {"admitted", Admitted(list)}}));
                     continue;
                 }
                 if (!Lists(list, place->location)) {
-                    problems.push_back(std::format("{} cannot be {}{}", place->name, role, Admitted(list)));
+                    problems.push_back(Problem(PlotRejection::Code::RoleNotAdmitted,
+                                               goal,
+                                               slot,
+                                               {{"who", place->name}, {"admitted", Admitted(list)}}));
                     continue;
                 }
                 out.values.push_back({std::string{slot.name}, place->location, place->name});
@@ -780,18 +856,18 @@ namespace NarrativeEngine::PlotCandidates
             case PlotVerbs::SlotKind::Thing: {
                 const Candidate* match = nullptr;
                 for (const auto& c : list) {
-                    if (Says(text, c.value.text)
+                    if (Says(text, c.value.text, TableOf(request))
                         && (match == nullptr || c.value.text.size() > match->value.text.size())) {
                         match = &c;
                     }
                 }
                 if (match == nullptr) {
-                    std::string pool;
+                    nlohmann::json pool = nlohmann::json::array();
                     for (const auto& item : request.world.items) {
-                        pool += (pool.empty() ? "" : "; ") + item.displayName;
+                        pool.push_back(item.displayName);
                     }
-                    problems.push_back(
-                        std::format("'{}' names nothing that can be {}; it must be one of: {}", text, role, pool));
+                    problems.push_back(Problem(
+                        PlotRejection::Code::ThingUnknown, goal, slot, {{"text", text}, {"pool", std::move(pool)}}));
                     continue;
                 }
                 out.values.push_back({std::string{slot.name}, match->value.form, match->value.text});
@@ -800,9 +876,6 @@ namespace NarrativeEngine::PlotCandidates
             }
         }
 
-        for (const auto& p : problems) {
-            out.problem += (out.problem.empty() ? "" : "; ") + p;
-        }
         return out;
     }
 
@@ -823,29 +896,31 @@ namespace NarrativeEngine::PlotCandidates
         return out;
     }
 
-    std::string Describe(const Request& request, const PlotCasting::Member& member)
+    Why Describe(const Request& request, const PlotCasting::Member& member)
     {
-        const Ctx ctx{request, NamedIn(request.population, request.naming)};
-        return PersonLine(request, Rank(ctx, member));
+        const Ctx ctx{request, NamedIn(request.population, request.naming, TableOf(request))};
+        return WhyOf(request, Rank(ctx, member));
     }
 
-    std::unordered_set<RE::FormID> NamedIn(const PlotCasting::Population& population, std::string_view text)
+    std::unordered_set<RE::FormID> NamedIn(const PlotCasting::Population& population,
+                                           std::string_view text,
+                                           const LanguageTable::Table& table)
     {
         std::unordered_set<RE::FormID> out;
-        const auto words = Words(text);
-        if (words.empty()) {
+        const NameReader says{text, table};
+        if (says.Empty()) {
             return out;
         }
-        const std::unordered_set<std::string> said(words.begin(), words.end());
 
         // Who carries each word the text says, among the words of anybody's
         // name. Short words ("of", "the") never name anybody.
+        const auto shortest = TextMatch::ShortestNamePart(table.Matching().options, 3);
         std::unordered_map<std::string, std::vector<RE::FormID>> carriers;
         for (const auto& member : population.members) {
             std::unordered_set<std::string> own;
-            for (auto& word : Words(member.name)) {
-                if (word.size() >= 3 && said.contains(word) && own.insert(word).second) {
-                    carriers[word].push_back(member.npc);
+            for (const auto word : TextUtf8::Words(member.name)) {
+                if (TextUtf8::CodePointCount(word) >= shortest && says(word) && own.emplace(word).second) {
+                    carriers[std::string{word}].push_back(member.npc);
                 }
             }
         }
@@ -902,7 +977,7 @@ namespace NarrativeEngine::PlotCandidates
     std::vector<Candidate> Build(const PlotVerbs::Slot& slot, const Request& request, const Limits& limits)
     {
         // Only a person list reads the scheme's names.
-        const auto people = [&] { return Ctx{request, NamedIn(request.population, request.naming)}; };
+        const auto people = [&] { return Ctx{request, NamedIn(request.population, request.naming, TableOf(request))}; };
         switch (slot.rule) {
         case Rule::AnyPerson: {
             const auto ctx = people();
@@ -1015,11 +1090,14 @@ namespace NarrativeEngine::PlotCandidates
                         audience = option.name;
                     }
                 }
+                // In the request's language: the session's, as it is kept with
+                // the step and remembered by everyone the step reaches, or a
+                // language trial's.
                 if (audience.empty()) {
-                    const auto where = SettlementName(request, mark->settlement);
-                    audience = where.empty() ? std::string{"the people they lead"} : "the people of " + where;
+                    audience =
+                        PlotText::Audience(TableOf(request), SettlementName(request, mark->settlement), mark->name);
                 }
-                return Keyed({{{}, {std::string{slot.name}, 0, audience}, audience}}, limits.people);
+                return Keyed({{{}, {std::string{slot.name}, 0, audience}, {}}}, limits.people);
             }
 
             if (boss != nullptr && boss != subject) {
@@ -1067,7 +1145,7 @@ namespace NarrativeEngine::PlotCandidates
         case Rule::ItemPool: {
             std::vector<Candidate> out;
             for (const auto& item : request.world.items) {
-                out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, item.displayName});
+                out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, {}});
             }
             return Keyed(std::move(out), limits.things);
         }
@@ -1078,7 +1156,7 @@ namespace NarrativeEngine::PlotCandidates
             std::vector<Candidate> out;
             for (const auto& item : request.world.items) {
                 if (item.category == PlotItemPool::Category::Document) {
-                    out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, item.displayName});
+                    out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, {}});
                 }
             }
             return Keyed(std::move(out), limits.things);
@@ -1087,7 +1165,7 @@ namespace NarrativeEngine::PlotCandidates
         case Rule::BoundItem: {
             std::vector<Candidate> out;
             if (auto bound = Bind(slot, request)) {
-                out.push_back({"c1", *bound, bound->text});
+                out.push_back({"c1", *bound, {}});
             }
             return out;
         }

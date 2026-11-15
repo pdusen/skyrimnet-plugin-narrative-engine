@@ -35,10 +35,8 @@
 // Row shape, which is NOT what PublicAPI.h's example shows: `type`,
 // `gameTime`, `originatingActorName` and `targetActorName` are
 // top-level, but the spoken line is `data.dialogue`. There is no `text`
-// field on a raw row — SkyrimNetEvents::FormatEventsText writes one,
-// from `type` plus `data`, for callers that want the rendered
-// "Speaker -> Listener: line" form. Reading the header's documented
-// `text` instead cost a session's worth of empty dialogue blocks.
+// field on a raw row. Reading the header's documented `text` instead
+// cost a session's worth of empty dialogue blocks.
 //
 // Threading: no engine access, so no token. The fetch is a SkyrimNet
 // DLL call; the two shaping functions are pure over their arguments,
@@ -81,8 +79,9 @@ namespace NarrativeEngine::SenderDialogue
     // show the full window than to blank it on a missing field.
     void FilterByMemoryAge(nlohmann::json& dialogue, const nlohmann::json& memories, double nowGameSeconds);
 
-    // Replace each entry's `gameTime` with a rendered `age_str`. Called
-    // after the age filter so the formatting cost is only paid on
-    // entries the prompt renders.
+    // Replace each entry's `gameTime` with an `age` bucket (see
+    // EventText.h), unit `unknown` when there is no clock to measure it
+    // by. Called after the age filter so the cost is only paid on entries
+    // the prompt renders.
     void AnnotateAges(nlohmann::json& dialogue, double nowGameSeconds);
 } // namespace NarrativeEngine::SenderDialogue

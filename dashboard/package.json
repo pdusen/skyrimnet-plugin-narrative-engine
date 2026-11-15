@@ -5,7 +5,8 @@
   "type": "module",
   "description": "NarrativeEngine in-game dashboard — rendered by PrismaUI, driven by C++ JSON pushes via window.updateFullState.",
   "scripts": {
-    "build": "rollup -c"
+    "build": "rollup -c",
+    "test": "tsc -p tsconfig.test.json && node --test \"test/*.test.mjs\""
   },
   "dependencies": {
     "react": "^18.3.0",

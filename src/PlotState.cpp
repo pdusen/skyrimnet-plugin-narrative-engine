@@ -1,6 +1,8 @@
 #include <PlotState.h>
 
+#include <Localization.h>
 #include <logger.h>
+#include <PlotText.h>
 #include <Settings.h>
 
 #include <algorithm>
@@ -146,21 +148,22 @@ namespace NarrativeEngine::Plots
         // earlier steps can run with no world loaded, so it must not
         // reach for a TESForm to name anyone.
         plot.mastermind = 0xDEAD0001;
-        plot.mastermindName = "Debug Mastermind";
-        plot.ambition = "A hand-seeded plot, standing in until plot birth exists.";
-        plot.scheme = "Get the Amulet of Kings out of the Broker's hands and into hers.";
+        const auto& table = Localization::Get();
+        plot.mastermindName = PlotText::TestText(table, PlotText::TestLine::DebugMastermind);
+        plot.ambition = PlotText::TestText(table, PlotText::TestLine::DebugAmbition);
+        plot.scheme = PlotText::TestText(table, PlotText::TestLine::DebugScheme);
         plot.bornOnGameDay = gameDay;
 
-        const auto addStep = [&plot](PlotModel::StepType type, const char* description) {
+        const auto addStep = [&plot](PlotModel::StepType type, std::string description) {
             PlotModel::Step step;
             step.type = type;
-            step.description = description;
+            step.description = std::move(description);
             plot.plan.push_back(std::move(step));
         };
 
-        addStep(PlotModel::StepType::Locate, "Find out which of the Broker's rooms the amulet is kept in.");
-        addStep(PlotModel::StepType::Surveil, "Watch the estate until the household's evening routine is clear.");
-        addStep(PlotModel::StepType::Acquire, "Take the amulet during the hour the study stands empty.");
+        addStep(PlotModel::StepType::Locate, PlotText::TestText(table, PlotText::TestLine::DebugLocate));
+        addStep(PlotModel::StepType::Surveil, PlotText::TestText(table, PlotText::TestLine::DebugSurveil));
+        addStep(PlotModel::StepType::Acquire, PlotText::TestText(table, PlotText::TestLine::DebugAcquire));
 
         auto& row = state.occupancy[plot.mastermind];
         row.plotId = plot.id;

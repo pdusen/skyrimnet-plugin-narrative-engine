@@ -275,7 +275,7 @@ namespace NarrativeEngine::PlotSerialize
                 || !WritePod(sink, static_cast<std::uint32_t>(plot.cursor)) || !WriteStepVector(sink, plot.history)
                 || !WritePod(sink, plot.adaptations) || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
                 || !WritePod(sink, static_cast<std::uint8_t>(plot.outcome)) || !WritePod(sink, plot.bornOnGameDay)
-                || !WritePod(sink, plot.endedOnGameDay) || !WriteString(sink, plot.concession)
+                || !WritePod(sink, plot.endedOnGameDay)
                 || !WritePod(sink, static_cast<std::uint32_t>(plot.abandoned.size()))) {
                 return false;
             }
@@ -378,7 +378,7 @@ namespace NarrativeEngine::PlotSerialize
                 || !ReadStepVector(source, plot.plan, resolved) || !ReadPod(source, cursor)
                 || !ReadStepVector(source, plot.history, resolved) || !ReadPod(source, plot.adaptations)
                 || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome) || !ReadPod(source, plot.bornOnGameDay)
-                || !ReadPod(source, plot.endedOnGameDay) || !ReadString(source, plot.concession)) {
+                || !ReadPod(source, plot.endedOnGameDay)) {
                 return fail();
             }
 

@@ -1,0 +1,70 @@
+{# event_timeline.prompt — the Director's event timeline: one line per entry
+   of `recent_events`, oldest first, as "- [type] [age] what happened".
+   Rendered by narrative_engine_story_eval and narrative_engine_action_select.
+   render_template passes no arguments, so this reads `recent_events` by name,
+   which both prompts' contexts carry.
+
+   Each entry has a `line` record saying what happened, as fields, and an
+   `age` when it has a time. include/EventText.h in the source lists every
+   record kind and its fields. The dashboard words the same records from the
+   language file's [Event.*] sections; a kind added there needs wording here
+   too. Fields only some kinds carry are read under an `if` on the kind, never
+   behind an `and`: older Inja evaluates both sides.
+
+   Whitespace: every branch's text sits on one line and that line's newline
+   ends the entry. `-%}` on a tag eats everything after it up to the next
+   text, and `{%-` keeps the newline before it, so indent freely between
+   tags but keep each branch's words on one line. #}{% for evt in recent_events -%}
+- [{{ evt.type }}] {% if existsIn(evt, "age") %}[{% if evt.age.unit == "moment" %}just now{% else %}{{ evt.age.value }} {{ evt.age.unit }}{% if evt.age.value != 1 %}s{% endif %} ago{% endif %}] {% endif -%}
+    {%- if evt.line.kind == "dialogue" or evt.line.kind == "player_dialogue" -%}
+        {% if evt.line.kind == "player_dialogue" %}(player) {% endif %}{{ evt.line.speaker }}{% if length(evt.line.listener) > 0 %} -> {{ evt.line.listener }}{% endif %}: "{{ evt.line.dialogue }}"
+    {%- else if evt.line.kind == "gamemaster_dialogue" -%}
+        {{ evt.line.speaker }} -> {{ evt.line.target }} (topic: {{ evt.line.topic }}): {{ evt.line.dialogue }}
+    {%- else if evt.line.kind == "npc_thoughts" -%}
+        {{ evt.line.name }} (thinking): "{{ evt.line.thoughts }}"
+    {%- else if evt.line.kind == "death" -%}
+        {{ evt.line.killer }} killed {{ evt.line.victim }}
+    {%- else if evt.line.kind == "book_read" -%}
+        {% if length(evt.line.reader) > 0 %}{{ evt.line.reader }}{% else %}The player{% endif %} read {% if length(evt.line.title) > 0 %}"{{ evt.line.title }}"{% else %}a book{% endif %}{% if length(evt.line.body) > 0 %}:{{ "\n" }}{{ evt.line.body }}{% endif %}
+    {%- else if evt.line.kind == "text" -%}
+        {{ evt.line.text }}
+    {%- else if evt.line.kind == "combat_start" -%}
+        {{ evt.line.actor }} enters combat
+    {%- else if evt.line.kind == "combat_end" -%}
+        {{ evt.line.actor }} leaves combat
+    {%- else if evt.line.kind == "collapse" -%}
+        {{ evt.line.actor }} collapses
+    {%- else if evt.line.kind == "regain_footing" -%}
+        {{ evt.line.actor }} regains their footing
+    {%- else if evt.line.kind == "hit" -%}
+        {% if evt.line.source == "actor" %}{{ evt.line.actor }} strikes {{ evt.line.target }}{% else %}{{ evt.line.target }} took damage{% endif %}{% if evt.line.source == "poison" %} from poison{% else if evt.line.source == "spell_trap" %} from a spell trap{% else if evt.line.source == "trap" %} from a trap{% else if evt.line.source == "activator" and length(evt.line.actor) > 0 %} from {{ evt.line.actor }}{% endif %}
+    {%- else if evt.line.kind == "combat_summary" -%}
+        {% if length(evt.line.fights) > 1 %}Combat continues: {% endif %}{% for f in evt.line.fights %}{% if not loop.is_first %}; {% endif %}{% if f.shape == "strike" %}{{ f.aggressor }} strikes {{ f.victim }}{% else if f.shape == "trade" %}{{ f.aggressor }} and {{ f.victim }} trade blows{% else %}{{ f.aggressor }} attacks {{ f.victim }}{% endif %}{% endfor %}{% if evt.line.others %}, and others{% endif %}{% for d in evt.line.damage %}{% if not loop.is_first or length(evt.line.fights) > 0 %}; {% endif %}{{ d.target }} took {% if d.repeated %}repeated {% endif %}damage{% if d.source == "poison" %} from poison{% else if d.source == "spell_trap" %} from a spell trap{% else if d.source == "trap" %} from a trap{% else if (d.source == "activator" or d.source == "actor") and length(d.actor) > 0 %} from {{ d.actor }}{% endif %}{% endfor %}
+    {%- else if evt.line.kind == "weather" -%}
+        {% if evt.line.change == "blizzard_start" %}A blizzard has struck.{% else if evt.line.change == "storm_intensify" %}The wind is picking up and the storm intensifies.{% else if evt.line.change == "storm_subside" %}The storm is subsiding.{% else if evt.line.change == "storm_start" %}A thunderstorm is rolling in.{% else if evt.line.change == "rain_start" %}Rain has started to fall.{% else if evt.line.change == "snow_start" %}Snow is beginning to fall.{% else if evt.line.change == "rain_stop" %}The rain has stopped.{% else if evt.line.change == "snow_stop" %}The snow is letting up.{% else if evt.line.change == "clear_start" %}The clouds have parted and the sun is coming out.{% else if evt.line.change == "cloudy_start" %}The sky has clouded over.{% else %}The weather has shifted.{% endif %}
+    {%- else if evt.line.kind == "travel" -%}
+        {% for n in evt.line.party %}{% if not loop.is_first %}{% if loop.is_last %}{% if length(evt.line.party) > 2 %},{% endif %} and {% else %}, {% endif %}{% endif %}{% if length(n) > 0 %}{{ n }}{% else %}The Player{% endif %}{% endfor %} {% if evt.line.move == "entered_location" -%}
+            {% if evt.line.interior %}entered{% else %}arrived at{% endif %} {{ evt.line.place }}.
+        {%- else if evt.line.move == "left_location" -%}
+            {% if evt.line.interior %}exited{% else %}departed from{% endif %} {{ evt.line.place }}.
+        {%- else if evt.line.move == "crossed_holds" -%}
+            crossed from {{ evt.line.from }} into {{ evt.line.to }}.
+        {%- else if evt.line.move == "entered_wilderness" -%}
+            {% if evt.line.exited %}exited{% else %}departed from{% endif %} {{ evt.line.origin }} and {% if length(evt.line.party) >= 2 %}are{% else %}is{% endif %} now in the wilderness of {{ evt.line.hold }}.
+        {%- else if evt.line.move == "fast_travel_arrived" -%}
+            {% if evt.line.interior %}entered{% else %}arrived at{% endif %} {{ evt.line.place }}{% if length(evt.line.origin) > 0 %}, having journeyed from {{ evt.line.origin }}{% endif %}.
+        {%- else if evt.line.move == "journey" -%}
+            {% if length(evt.line.origin) > 0 and length(evt.line.arrival) > 0 %}travelled from {{ evt.line.origin }} to {{ evt.line.arrival }}.{% else if length(evt.line.arrival) > 0 %}ended up in {{ evt.line.arrival }}.{% else if length(evt.line.origin) > 0 %}set out from {{ evt.line.origin }}.{% else %}travelled a while.{% endif %}
+        {%- else if evt.line.move == "visit" -%}
+            {% if length(evt.line.places) > 0 %}visited {% for p in evt.line.places %}{% if not loop.is_first %}{% if loop.is_last %}{% if length(evt.line.places) > 2 %},{% endif %} and {% else %}, {% endif %}{% endif %}{{ p }}{% endfor %}.{% else %}looked around.{% endif %}
+        {%- else -%}
+            travelled somewhere.
+        {%- endif -%}
+    {%- else if evt.line.kind == "idle" -%}
+        Nothing notable has happened for {% if evt.line.duration.unit == "moment" %}less than a minute{% else %}{{ evt.line.duration.value }} {{ evt.line.duration.unit }}{% if evt.line.duration.value != 1 %}s{% endif %}{% endif %}
+    {%- else if evt.line.kind == "idle_long" -%}
+        Nothing notable has happened for over an hour
+    {%- else -%}
+        (no data)
+    {%- endif -%}
+{% endfor -%}

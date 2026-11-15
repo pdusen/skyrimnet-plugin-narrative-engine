@@ -30,7 +30,7 @@ namespace NarrativeEngine
         // Cumulative game-seconds since session epoch — same units as
         // SkyrimNet's per-event `gameTime` field, so we can compute
         // "N minutes/hours/days ago" relative timestamps for events. Not
-        // sent to the prompt template; used C++-side only by FormatEventsText.
+        // sent to the prompt template; used C++-side only by DescribeEvents.
         // (The prompt's absolute "current game time" line is rendered by
         // SkyrimNet's built-in `{{ gameTime }}` decorator, not by us.)
         double gameTimeSeconds = 0.0;

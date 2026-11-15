@@ -15,14 +15,17 @@
 // PlotVerbs — the closed set of things a plot step can be.
 //
 // A step is one of these verbs with its slots filled. Each verb fixes the
-// sentence the dashboard shows, the people, places and things it needs and
-// the rule each is admitted by, who would know it happened, which of the
-// nine resolution profiles sizes and rolls it, and every memory it writes.
+// people, places and things it needs and the rule each is admitted by, who
+// would know it happened, which of the nine resolution profiles sizes and
+// rolls it, and which memories it writes. The words of those memories, and
+// of the dashboard's line for it, are in the language files (see PlotText).
 // Nothing about a step is written by a model: the model only ever chooses a
 // verb from this list and a filler for each slot from a list of candidates.
 //
 // See docs/implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md, whose
-// template blocks this table is generated from and must stay in step with.
+// template blocks this table and english.ini's [Plot.*] sections were
+// generated from. Since Phase 18 Step 5 the shipped language files, not that
+// document, are where a memory's words are changed.
 namespace NarrativeEngine::PlotVerbs
 {
     enum class SlotKind : std::uint8_t
@@ -96,25 +99,30 @@ namespace NarrativeEngine::PlotVerbs
         SlotKind kind = SlotKind::Person;
         Rule rule = Rule::AnyPerson;
         Awareness awareness = Awareness::Unset;
-        // What the slot is for, in a few words: "whom it is shown to". The
-        // scheme call is shown it beside the slot's name, so it can name who
-        // or what fills each role of the step it ends in.
-        std::string_view says{};
-        // What its person remembers. Per slot rather than per verb, because
-        // two people a step reaches -- a denunciation's accused and the
-        // authority -- remember the same act in different words.
-        std::array<std::string_view, kTargetTemplateCount> remembers{};
+        // What the slot is for, in a few words -- "whom it is shown to" -- is
+        // the prompts' to say, in components/narrative_engine/plot_role.prompt.
+        // Which TargetTemplate memories its person keeps. Per slot rather
+        // than per verb, because two people a step reaches -- a
+        // denunciation's accused and the authority -- remember the same act
+        // differently. The words are in the language files'
+        // [Plot.Remembered] section; see PlotText.
+        std::array<bool, kTargetTemplateCount> remembers{};
 
-        [[nodiscard]] constexpr std::string_view Text(TargetTemplate t) const noexcept
+        [[nodiscard]] constexpr bool Remembers(TargetTemplate t) const noexcept
         {
             return remembers[static_cast<std::size_t>(t)];
         }
     };
 
-    // The twelve templates every verb carries, in this order. The first is
-    // the dashboard's present-tense line; the next nine are first-person,
-    // past tense memories, the last of them added by Milestone 3; the final
-    // two are the work alone, for the plot each person in it is told of.
+    // The twelve templates every verb has, in this order. The first is the
+    // dashboard's present-tense line; the next nine are first-person, past
+    // tense memories, the last of them added by Milestone 3; the final two
+    // are the work alone, for the plot each person in it is told of.
+    //
+    // The line and the memories are in the language files and rendered by
+    // PlotText. The prompts word the line themselves, in
+    // components/narrative_engine/plot_step.prompt, and the two task phrases
+    // in plot_task.prompt.
     enum class Template : std::uint8_t
     {
         Dashboard,
@@ -158,430 +166,138 @@ namespace NarrativeEngine::PlotVerbs
         bool agentBoundToItem = false;
         // A later BoundItem slot can bind to what this verb obtains.
         bool obtainsItem = false;
-        std::array<std::string_view, kTemplateCount> templates{};
         // Whether a scheme can end in it. A verb that only makes, finds or
         // hides something cannot: what it got is for a later step, and a
         // forgery nobody is shown, or a ledger nobody reads, finishes
         // nothing.
         bool finishes = true;
-
-        [[nodiscard]] constexpr std::string_view Text(Template t) const noexcept
-        {
-            return templates[static_cast<std::size_t>(t)];
-        }
     };
-
-    // Written to the mastermind when a plot ends unfinished with them alive.
-    // One sentence for every verb: it follows a failure memory that already
-    // says what went wrong.
-    inline constexpr std::string_view kConcededTemplate = "I gave up on my plan to {scheme}.";
-
-    // Written to the mastermind when the finish succeeds, and when it fails.
-    // Like the concession, each follows the step memories that say how.
-    inline constexpr std::string_view kSucceededTemplate = "I brought off my plan to {scheme}.";
-    inline constexpr std::string_view kFailedTemplate = "My plan to {scheme} came to nothing.";
-
-    // Not a memory of its own: the end of the mastermind's memory of a failed
-    // step, when the plot goes on another way. Going on is what they make of
-    // the failure, so it belongs in the same memory rather than a second one.
-    inline constexpr std::string_view kWentOnClause = ", but I found another way to go on with my plan to {scheme}.";
 
     inline constexpr std::array<Verb, 24> kVerbs{{
         Verb{
             "watch",
             "Watch",
             PlotModel::StepType::Surveil,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Failure,
-                   "whom they watch",
-                   {{"I caught {agent} watching me.", "", ""}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, {{true, false, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} watches {mark}, learning their habits.",
-                "{mastermind} asked me to keep watch on {mark} and learn their habits, so I set off to do it.",
-                "I sent {agent} to keep watch on {mark} and learn their habits, as part of my plan to {scheme}.",
-                "I decided to keep watch on {mark} myself and learn their habits, as part of my plan to {scheme}.",
-                "I kept watch on {mark} until I knew their habits.",
-                "{mark} spotted me watching them, and I had to break it off.",
-                "I kept watch on {mark}, but ran out of time before I learned their habits.",
-                "{agent} reported back that {mark} had spotted them watching.",
-                "{agent} reported back that they had run out of time before learning {mark}'s habits.",
-                "{agent} reported back that they had learned {mark}'s habits.",
-                "keep watch on {mark} and learn their habits",
-                "keep watch on {mark} and learn their habits",
-            }},
         },
         Verb{
             "ask_around",
             "Ask Around",
             PlotModel::StepType::Locate,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Failure,
-                   "whom they ask about",
-                   {{"I heard that {agent} was asking questions about me around {place}.", "", ""}}},
-              Slot{"place", SlotKind::Place, Rule::MarkCommunity, Awareness::Unset, "the settlement they ask around"}}},
+            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, {{true, false, false}}},
+              Slot{"place", SlotKind::Place, Rule::MarkCommunity, Awareness::Unset}}},
             2,
             false,
             false,
-            {{
-                "{agent} asks around {place} about {mark}.",
-                "{mastermind} asked me to go around {place} asking questions about {mark}, so I set off to do it.",
-                "I sent {agent} to ask around {place} about {mark}, as part of my plan to {scheme}.",
-                "I decided to ask around {place} about {mark} myself, as part of my plan to {scheme}.",
-                "I asked around {place} and learned what I needed to know about {mark}.",
-                "Word got back to {mark} that I was asking questions about them around {place}, and I had to stop.",
-                "I asked around {place} about {mark}, but ran out of time before anyone told me anything useful.",
-                "{agent} reported back that {mark} had heard they were asking questions around {place}.",
-                "{agent} reported back that they had run out of time before learning anything useful about {mark}.",
-                "{agent} reported back that they had learned what I needed to know about {mark} around {place}.",
-                "ask around {place} about {mark}",
-                "go around {place} asking questions about {mark}",
-            }},
         },
         Verb{
             "steal",
             "Steal",
             PlotModel::StepType::Acquire,
-            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset, "what is stolen"},
-              Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Failure,
-                   "whom it is stolen from",
-                   {{"I caught {agent} trying to steal {item} from me.", "", "Someone stole {item} from me."}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, {{true, false, true}}}}},
             2,
             false,
             true,
-            {{
-                "{agent} steals {item} from {mark}.",
-                "{mastermind} asked me to steal {item} from {mark}, so I set off to do it.",
-                "I sent {agent} to steal {item} from {mark}, as part of my plan to {scheme}.",
-                "I decided to steal {item} from {mark} myself, as part of my plan to {scheme}.",
-                "I stole {item} from {mark}.",
-                "{mark} caught me trying to steal {item} from them.",
-                "I tried to steal {item} from {mark}, but ran out of time before I could get my hands on it.",
-                "{agent} reported back that {mark} had caught them trying to steal {item}.",
-                "{agent} reported back that they had run out of time before they could steal {item} from {mark}.",
-                "{agent} reported back that they had stolen {item} from {mark}.",
-                "steal {item} from {mark}",
-                "steal {item} from {mark}",
-            }},
         },
         Verb{
             "buy",
             "Buy",
             PlotModel::StepType::Acquire,
-            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset, "what is bought"},
-              Slot{"seller",
-                   SlotKind::Person,
-                   Rule::TradesForLiving,
-                   Awareness::Contact,
-                   "who sells it",
-                   {{"{agent} tried to buy {item} from me, but the deal went sour.",
-                     "I sold {item} to {agent}.",
-                     ""}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset},
+              Slot{"seller", SlotKind::Person, Rule::TradesForLiving, Awareness::Contact, {{true, true, false}}}}},
             2,
             false,
             true,
-            {{
-                "{agent} buys {item} from {seller}.",
-                "{mastermind} asked me to buy {item} from {seller}, so I set off to do it.",
-                "I sent {agent} to buy {item} from {seller}, as part of my plan to {scheme}.",
-                "I decided to buy {item} from {seller} myself, as part of my plan to {scheme}.",
-                "I bought {item} from {seller}.",
-                "I tried to buy {item} from {seller}, but the deal went sour.",
-                "I tried to buy {item} from {seller}, but ran out of time before we could strike a deal.",
-                "{agent} reported back that the deal with {seller} for {item} had gone sour.",
-                "{agent} reported back that they had run out of time before striking a deal with {seller} for {item}.",
-                "{agent} reported back that they had bought {item} from {seller}.",
-                "buy {item} from {seller}",
-                "buy {item} from {seller}",
-            }},
         },
         Verb{
             "deliver",
             "Deliver",
             PlotModel::StepType::Deliver,
-            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "what is brought"},
-              Slot{"recipient",
-                   SlotKind::Person,
-                   Rule::AnyPerson,
-                   Awareness::Contact,
-                   "whom it is brought to",
-                   {{"{agent} set out to bring me {item}, but never arrived.", "{agent} brought me {item}.", ""}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset},
+              Slot{"recipient", SlotKind::Person, Rule::AnyPerson, Awareness::Contact, {{true, true, false}}}}},
             2,
             true,
             false,
-            {{
-                "{agent} brings {item} to {recipient}.",
-                "{mastermind} asked me to bring {item} to {recipient}, so I set off to do it.",
-                "I sent {agent} to bring {item} to {recipient}, as part of my plan to {scheme}.",
-                "I decided to bring {item} to {recipient} myself, as part of my plan to {scheme}.",
-                "I brought {item} to {recipient}.",
-                "I was stopped on my way to bring {item} to {recipient}.",
-                "I ran out of time before I could bring {item} to {recipient}.",
-                "{agent} reported back that they had been stopped on the way to bring {item} to {recipient}.",
-                "{agent} reported back that they had run out of time before bringing {item} to {recipient}.",
-                "{agent} reported back that they had brought {item} to {recipient}.",
-                "bring {item} to {recipient}",
-                "bring {item} to {recipient}",
-            }},
         },
         Verb{
             "plant",
             "Plant",
             PlotModel::StepType::Conceal,
-            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "what is hidden"},
-              Slot{"mark",
-                   SlotKind::Person,
-                   Rule::AnyPerson,
-                   Awareness::Failure,
-                   "among whose belongings",
-                   {{"I caught {agent} trying to hide {item} among my belongings.", "", ""}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Failure, {{true, false, false}}}}},
             2,
             true,
             false,
-            {{
-                "{agent} hides {item} among {mark}'s belongings.",
-                "{mastermind} asked me to hide {item} among {mark}'s belongings, so I set off to do it.",
-                "I sent {agent} to hide {item} among {mark}'s belongings, as part of my plan to {scheme}.",
-                "I decided to hide {item} among {mark}'s belongings myself, as part of my plan to {scheme}.",
-                "I hid {item} among {mark}'s belongings.",
-                "{mark} caught me trying to hide {item} among their belongings.",
-                "I ran out of time before I could hide {item} among {mark}'s belongings.",
-                "{agent} reported back that {mark} had caught them trying to hide {item} among their belongings.",
-                "{agent} reported back that they had run out of time before hiding {item} among {mark}'s belongings.",
-                "{agent} reported back that they had hidden {item} among {mark}'s belongings.",
-                "hide {item} among {mark}'s belongings",
-                "hide {item} among {mark}'s belongings",
-            }},
             false,
         },
         Verb{
             "bribe",
             "Bribe",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::RosteredStanding,
-                   Awareness::Contact,
-                   "who is paid to look the other way",
-                   {{"{agent} offered me coin to look the other way, and I refused it.",
-                     "{agent} paid me to look the other way.",
-                     ""}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::RosteredStanding, Awareness::Contact, {{true, true, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} pays {mark} to look the other way.",
-                "{mastermind} asked me to pay {mark} to look the other way, so I set off to do it.",
-                "I sent {agent} to pay {mark} to look the other way, as part of my plan to {scheme}.",
-                "I decided to pay {mark} to look the other way myself, as part of my plan to {scheme}.",
-                "I paid {mark}, and they agreed to look the other way.",
-                "I offered {mark} coin to look the other way, but they would not take it.",
-                "I ran out of time before I could get {mark} alone to offer them coin.",
-                "{agent} reported back that {mark} had refused the bribe.",
-                "{agent} reported back that they had run out of time before they could offer {mark} the bribe.",
-                "{agent} reported back that {mark} had taken the coin and would look the other way.",
-                "pay {mark} to look the other way",
-                "pay {mark} to look the other way",
-            }},
         },
         Verb{
             "win_over",
             "Win Over",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::NotHostileKnown,
-                   Awareness::Contact,
-                   "who is won over",
-                   {{"{agent} tried to win me over to {mastermind}'s side, but I would not be swayed.",
-                     "{agent} won me over to {mastermind}'s side.",
-                     ""}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::NotHostileKnown, Awareness::Contact, {{true, true, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} wins {mark} over to {mastermind}'s side.",
-                "{mastermind} asked me to win {mark} over to their side, so I set off to do it.",
-                "I sent {agent} to win {mark} over to my side, as part of my plan to {scheme}.",
-                "I decided to win {mark} over to my side myself, as part of my plan to {scheme}.",
-                "I won {mark} over.",
-                "I tried to win {mark} over, but they would not be swayed.",
-                "I ran out of time before I could win {mark} over.",
-                "{agent} reported back that {mark} would not be won over.",
-                "{agent} reported back that they had run out of time before winning {mark} over.",
-                "{agent} reported back that they had won {mark} over to my side.",
-                "win {mark} over to your side",
-                "win {mark} over to their side",
-            }},
         },
         Verb{
             "threaten",
             "Threaten",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Contact,
-                   "who is warned off",
-                   {{"{agent} warned me to stay out of {mastermind}'s affairs, but I would not be frightened.",
-                     "{agent} warned me to stay out of {mastermind}'s affairs, and I took the warning to heart.",
-                     ""}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Contact, {{true, true, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} warns {mark} to stay out of {mastermind}'s affairs.",
-                "{mastermind} asked me to warn {mark} to stay out of their affairs, so I set off to do it.",
-                "I sent {agent} to warn {mark} to stay out of my affairs, as part of my plan to {scheme}.",
-                "I decided to warn {mark} to stay out of my affairs myself, as part of my plan to {scheme}.",
-                "I warned {mark} off, and they took the warning to heart.",
-                "I tried to warn {mark} off, but they would not be frightened.",
-                "I ran out of time before I could warn {mark} off.",
-                "{agent} reported back that {mark} would not be warned off.",
-                "{agent} reported back that they had run out of time before warning {mark} off.",
-                "{agent} reported back that {mark} had taken the warning to heart.",
-                "warn {mark} to stay out of your affairs",
-                "warn {mark} to stay out of their affairs",
-            }},
         },
         Verb{
             "spread_rumors",
             "Spread Rumors",
             PlotModel::StepType::Discredit,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::AnyPerson,
-                   Awareness::Failure,
-                   "whom the talk is about",
-                   {{"I found out that {agent} was spreading ugly talk about me around {place}.",
-                     "",
-                     "Someone has been spreading ugly talk about me around {place}."}}},
-              Slot{"place",
-                   SlotKind::Place,
-                   Rule::MarkOrMastermindSettlement,
-                   Awareness::Unset,
-                   "the settlement it is spread around"}}},
+            {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Failure, {{true, false, true}}},
+              Slot{"place", SlotKind::Place, Rule::MarkOrMastermindSettlement, Awareness::Unset}}},
             2,
             false,
             false,
-            {{
-                "{agent} spreads ugly talk about {mark} around {place}.",
-                "{mastermind} asked me to spread ugly talk about {mark} around {place}, so I set off to do it.",
-                "I sent {agent} to spread ugly talk about {mark} around {place}, as part of my plan to {scheme}.",
-                "I decided to spread ugly talk about {mark} around {place} myself, as part of my plan to {scheme}.",
-                "I spread ugly talk about {mark} around {place}, and people started repeating it.",
-                "I spread ugly talk about {mark} around {place}, but it was traced back to me.",
-                "I ran out of time before the talk about {mark} took hold around {place}.",
-                "{agent} reported back that the talk about {mark} around {place} had been traced back to them.",
-                "{agent} reported back that they had run out of time before the talk about {mark} took hold around {place}.",
-                "{agent} reported back that people around {place} had started repeating the talk about {mark}.",
-                "spread ugly talk about {mark} around {place}",
-                "spread ugly talk about {mark} around {place}",
-            }},
         },
         Verb{
             "denounce",
             "Denounce",
             PlotModel::StepType::Discredit,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::AnyPerson,
-                   Awareness::Success,
-                   "who is denounced",
-                   {{"", "{agent} denounced me to {authority}.", ""}}},
-              Slot{"authority",
-                   SlotKind::Person,
-                   Rule::AuthorityOverMark,
-                   Awareness::Contact,
-                   "whom they are denounced to",
-                   {{"{agent} came to me denouncing {mark}, and I was not convinced.",
-                     "{agent} came to me denouncing {mark}, and I believed them.",
-                     ""}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Success, {{false, true, false}}},
+              Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact, {{true, true, false}}}}},
             2,
             false,
             false,
-            {{
-                "{agent} denounces {mark} to {authority}.",
-                "{mastermind} asked me to denounce {mark} to {authority}, so I set off to do it.",
-                "I sent {agent} to denounce {mark} to {authority}, as part of my plan to {scheme}.",
-                "I decided to denounce {mark} to {authority} myself, as part of my plan to {scheme}.",
-                "I denounced {mark} to {authority}, and {authority} listened.",
-                "I tried to denounce {mark} to {authority}, but {authority} would not hear it.",
-                "I ran out of time before I could get an audience with {authority} to denounce {mark}.",
-                "{agent} reported back that {authority} would not hear a word against {mark}.",
-                "{agent} reported back that they had run out of time before getting an audience with {authority}.",
-                "{agent} reported back that they had denounced {mark} to {authority}, and {authority} had listened.",
-                "denounce {mark} to {authority}",
-                "denounce {mark} to {authority}",
-            }},
         },
         Verb{
             "sabotage",
             "Sabotage",
             PlotModel::StepType::Sabotage,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::TradesForLiving,
-                   Awareness::Failure,
-                   "whose livelihood is sabotaged",
-                   {{"I caught {agent} trying to sabotage my livelihood.",
-                     "",
-                     "Someone has been sabotaging my livelihood."}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::TradesForLiving, Awareness::Failure, {{true, false, true}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} sabotages {mark}'s livelihood.",
-                "{mastermind} asked me to sabotage {mark}'s livelihood, so I set off to do it.",
-                "I sent {agent} to sabotage {mark}'s livelihood, as part of my plan to {scheme}.",
-                "I decided to sabotage {mark}'s livelihood myself, as part of my plan to {scheme}.",
-                "I sabotaged {mark}'s livelihood.",
-                "{mark} caught me trying to sabotage their livelihood.",
-                "I ran out of time before I could do {mark}'s livelihood any real harm.",
-                "{agent} reported back that {mark} had caught them trying to sabotage their livelihood.",
-                "{agent} reported back that they had run out of time before doing {mark}'s livelihood any real harm.",
-                "{agent} reported back that they had sabotaged {mark}'s livelihood.",
-                "sabotage {mark}'s livelihood",
-                "sabotage {mark}'s livelihood",
-            }},
         },
         Verb{
             "silence",
             "Silence",
             PlotModel::StepType::Conceal,
-            {{Slot{
-                "witness",
-                SlotKind::Person,
-                Rule::AwareOfEarlierStep,
-                Awareness::Contact,
-                "who is paid to keep quiet",
-                {{"{agent} offered me coin to keep quiet, and I refused it.", "{agent} paid me to keep quiet.", ""}}}}},
+            {{Slot{"witness", SlotKind::Person, Rule::AwareOfEarlierStep, Awareness::Contact, {{true, true, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} pays {witness} to keep quiet.",
-                "{mastermind} asked me to pay {witness} to keep quiet, so I set off to do it.",
-                "I sent {agent} to pay {witness} to keep quiet, as part of my plan to {scheme}.",
-                "I decided to pay {witness} to keep quiet myself, as part of my plan to {scheme}.",
-                "I paid {witness}, and they agreed to keep quiet.",
-                "I offered {witness} coin to keep quiet, but they would not take it.",
-                "I ran out of time before I could pay {witness} to keep quiet.",
-                "{agent} reported back that {witness} would not be paid to keep quiet.",
-                "{agent} reported back that they had run out of time before paying {witness} to keep quiet.",
-                "{agent} reported back that {witness} had taken the coin and would keep quiet.",
-                "pay {witness} to keep quiet",
-                "pay {witness} to keep quiet",
-            }},
         },
         // Falsify, not forge: a model reads "forge" as smithing often enough
         // to plan a plot around a sword.
@@ -589,307 +305,111 @@ namespace NarrativeEngine::PlotVerbs
             "falsify",
             "Falsify",
             PlotModel::StepType::Acquire,
-            {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset, "what is forged"},
-              Slot{"subject",
-                   SlotKind::Person,
-                   Rule::AnyPerson,
-                   Awareness::Failure,
-                   "in whose name",
-                   {{"I found out that {agent} had tried to falsify {item} in my name.", "", ""}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset},
+              Slot{"subject", SlotKind::Person, Rule::AnyPerson, Awareness::Failure, {{true, false, false}}}}},
             2,
             false,
             true,
-            {{
-                "{agent} falsifies {item} in {subject}'s name.",
-                "{mastermind} asked me to falsify {item} in {subject}'s name, so I set off to do it.",
-                "I sent {agent} to falsify {item} in {subject}'s name, as part of my plan to {scheme}.",
-                "I decided to falsify {item} in {subject}'s name myself, as part of my plan to {scheme}.",
-                "I falsified {item} in {subject}'s name, good enough to pass.",
-                "My attempt to falsify {item} in {subject}'s name was found out.",
-                "I ran out of time before I could falsify {item} in {subject}'s name.",
-                "{agent} reported back that their attempt to falsify {item} in {subject}'s name had been found out.",
-                "{agent} reported back that they had run out of time before falsifying {item} in {subject}'s name.",
-                "{agent} reported back that they had falsified {item} in {subject}'s name, good enough to pass.",
-                "falsify {item} in {subject}'s name",
-                "falsify {item} in {subject}'s name",
-            }},
             false,
         },
         Verb{
             "dig_up",
             "Dig Up",
             PlotModel::StepType::Locate,
-            {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset, "the proof found"},
-              Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Failure,
-                   "whom it proves wrongdoing against",
-                   {{"I found out that {agent} was digging into my affairs.", "", ""}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, {{true, false, false}}}}},
             2,
             false,
             true,
-            {{
-                "{agent} digs up {item} proving {mark}'s wrongdoing.",
-                "{mastermind} asked me to dig up {item} proving {mark}'s wrongdoing, so I set off to do it.",
-                "I sent {agent} to dig up {item} proving {mark}'s wrongdoing, as part of my plan to {scheme}.",
-                "I decided to dig up {item} proving {mark}'s wrongdoing myself, as part of my plan to {scheme}.",
-                "I dug up {item} proving {mark}'s wrongdoing.",
-                "{mark} found out I was digging into their affairs, and I had to stop.",
-                "I dug into {mark}'s affairs, but ran out of time before I found anything I could prove.",
-                "{agent} reported back that {mark} had found out they were digging into their affairs.",
-                "{agent} reported back that they had run out of time before finding proof against {mark}.",
-                "{agent} reported back that they had dug up {item} proving {mark}'s wrongdoing.",
-                "dig up {item} proving {mark}'s wrongdoing",
-                "dig up {item} proving {mark}'s wrongdoing",
-            }},
             false,
         },
         Verb{
             "blackmail",
             "Blackmail",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Contact,
-                   "who is blackmailed",
-                   {{"{agent} tried to blackmail me into serving {mastermind}, but I called their bluff.",
-                     "{agent} blackmailed me into serving {mastermind}.",
-                     ""}}}}},
+            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Contact, {{true, true, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} blackmails {mark} into serving {mastermind}.",
-                "{mastermind} asked me to blackmail {mark} into serving them, so I set off to do it.",
-                "I sent {agent} to blackmail {mark} into serving me, as part of my plan to {scheme}.",
-                "I decided to blackmail {mark} into serving me myself, as part of my plan to {scheme}.",
-                "I blackmailed {mark}, and they gave in.",
-                "I tried to blackmail {mark}, but they called my bluff.",
-                "I ran out of time before I could put the squeeze on {mark}.",
-                "{agent} reported back that {mark} had called their bluff.",
-                "{agent} reported back that they had run out of time before blackmailing {mark}.",
-                "{agent} reported back that {mark} had given in to the blackmail.",
-                "blackmail {mark} into serving you",
-                "blackmail {mark} into serving them",
-            }},
         },
         Verb{
             "destroy",
             "Destroy",
             PlotModel::StepType::Sabotage,
-            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset, "what is destroyed"},
-              Slot{"mark",
-                   SlotKind::Person,
-                   Rule::KnownToMastermind,
-                   Awareness::Failure,
-                   "whom it belongs to",
-                   {{"I caught {agent} trying to destroy {item} of mine.", "", "Someone destroyed {item} of mine."}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, {{true, false, true}}}}},
             2,
             false,
             false,
-            {{
-                "{agent} destroys {item} belonging to {mark}.",
-                "{mastermind} asked me to destroy {item} belonging to {mark}, so I set off to do it.",
-                "I sent {agent} to destroy {item} belonging to {mark}, as part of my plan to {scheme}.",
-                "I decided to destroy {item} belonging to {mark} myself, as part of my plan to {scheme}.",
-                "I destroyed {item} belonging to {mark}.",
-                "{mark} caught me trying to destroy {item} of theirs.",
-                "I ran out of time before I could get at {item} belonging to {mark}.",
-                "{agent} reported back that {mark} had caught them trying to destroy {item}.",
-                "{agent} reported back that they had run out of time before destroying {item} belonging to {mark}.",
-                "{agent} reported back that they had destroyed {item} belonging to {mark}.",
-                "destroy {item} belonging to {mark}",
-                "destroy {item} belonging to {mark}",
-            }},
         },
         Verb{
             "petition",
             "Petition",
             PlotModel::StepType::Recruit,
-            {{Slot{"authority",
-                   SlotKind::Person,
-                   Rule::AuthorityOverMark,
-                   Awareness::Contact,
-                   "who is petitioned",
-                   {{"{agent} petitioned me on {mastermind}'s behalf, and I turned them away.",
-                     "{agent} petitioned me on {mastermind}'s behalf, and I granted it.",
-                     ""}}}}},
+            {{Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact, {{true, true, false}}}}},
             1,
             false,
             false,
-            {{
-                "{agent} petitions {authority} on {mastermind}'s behalf.",
-                "{mastermind} asked me to petition {authority} on their behalf, so I set off to do it.",
-                "I sent {agent} to petition {authority} on my behalf, as part of my plan to {scheme}.",
-                "I decided to petition {authority} myself, as part of my plan to {scheme}.",
-                "I petitioned {authority}, and they granted what was asked.",
-                "I petitioned {authority}, but they turned me away.",
-                "I ran out of time before I could get an audience with {authority}.",
-                "{agent} reported back that {authority} had turned them away.",
-                "{agent} reported back that they had run out of time before getting an audience with {authority}.",
-                "{agent} reported back that {authority} had granted the petition.",
-                "petition {authority} on your behalf",
-                "petition {authority} on their behalf",
-            }},
         },
         Verb{
             "expose",
             "Expose",
             PlotModel::StepType::Discredit,
-            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "the proof shown"},
-              Slot{"mark",
-                   SlotKind::Person,
-                   Rule::AnyPerson,
-                   Awareness::Success,
-                   "whom it is proof against",
-                   {{"", "{agent} showed {item} to {authority} as proof against me.", ""}}},
-              Slot{"authority",
-                   SlotKind::Person,
-                   Rule::AuthorityOverMark,
-                   Awareness::Contact,
-                   "whom it is shown to",
-                   {{"{agent} showed me {item} as proof against {mark}, but I was not convinced.",
-                     "{agent} showed me {item} as proof against {mark}, and it convinced me.",
-                     ""}}}}},
+            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Success, {{false, true, false}}},
+              Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact, {{true, true, false}}}}},
             3,
             true,
             false,
-            {{
-                "{agent} shows {item} to {authority} as proof against {mark}.",
-                "{mastermind} asked me to show {item} to {authority} as proof against {mark}, so I set off to do it.",
-                "I sent {agent} to show {item} to {authority} as proof against {mark}, as part of my plan to {scheme}.",
-                "I decided to show {item} to {authority} myself, as proof against {mark}, as part of my plan to "
-                "{scheme}.",
-                "I showed {item} to {authority}, and they took it as proof against {mark}.",
-                "I showed {item} to {authority}, but they would not take it as proof against {mark}.",
-                "I ran out of time before I could show {item} to {authority}.",
-                "{agent} reported back that {authority} would not take {item} as proof against {mark}.",
-                "{agent} reported back that they had run out of time before showing {item} to {authority}.",
-                "{agent} reported back that {authority} had taken {item} as proof against {mark}.",
-                "show {item} to {authority} as proof against {mark}",
-                "show {item} to {authority} as proof against {mark}",
-            }},
         },
         Verb{
             "smith",
             "Smith",
             PlotModel::StepType::Craft,
-            {{Slot{"item", SlotKind::Thing, Rule::SmithRecipe, Awareness::Unset, "what is made"}}},
+            {{Slot{"item", SlotKind::Thing, Rule::SmithRecipe, Awareness::Unset}}},
             1,
             false,
             true,
-            {{
-                "{agent} smiths {item}.",
-                "{mastermind} asked me to smith {item} for them, so I set to work at the forge.",
-                "I asked {agent} to smith {item} for me, as part of my plan to {scheme}.",
-                "I decided to smith {item} myself, as part of my plan to {scheme}.",
-                "I smithed {item}, and it came out well.",
-                "I ruined the work on {item} at the forge.",
-                "I ran out of time before I could finish smithing {item}.",
-                "{agent} reported back that they had ruined the work on {item}.",
-                "{agent} reported back that they had run out of time before finishing {item}.",
-                "{agent} reported back that they had smithed {item}.",
-                "smith {item}",
-                "smith {item} for them",
-            }},
             false,
         },
         Verb{
             "concoct",
             "Concoct",
             PlotModel::StepType::Craft,
-            {{Slot{"item", SlotKind::Thing, Rule::ConcoctRecipe, Awareness::Unset, "what is made"}}},
+            {{Slot{"item", SlotKind::Thing, Rule::ConcoctRecipe, Awareness::Unset}}},
             1,
             false,
             true,
-            {{
-                "{agent} concocts {item}.",
-                "{mastermind} asked me to concoct {item} for them, so I set to work.",
-                "I asked {agent} to concoct {item} for me, as part of my plan to {scheme}.",
-                "I decided to concoct {item} myself, as part of my plan to {scheme}.",
-                "I concocted {item}.",
-                "I spoiled the mixture while concocting {item}.",
-                "I ran out of time before I could finish concocting {item}.",
-                "{agent} reported back that they had spoiled the mixture for {item}.",
-                "{agent} reported back that they had run out of time before finishing {item}.",
-                "{agent} reported back that they had concocted {item}.",
-                "concoct {item}",
-                "concoct {item} for them",
-            }},
             false,
         },
         Verb{
             "enchant",
             "Enchant",
             PlotModel::StepType::Craft,
-            {{Slot{"item", SlotKind::Thing, Rule::EnchantRecipe, Awareness::Unset, "what is made"}}},
+            {{Slot{"item", SlotKind::Thing, Rule::EnchantRecipe, Awareness::Unset}}},
             1,
             false,
             true,
-            {{
-                "{agent} makes {item} at an arcane enchanter.",
-                "{mastermind} asked me to make {item} for them at an arcane enchanter, so I set to work.",
-                "I asked {agent} to make {item} for me at an arcane enchanter, as part of my plan to {scheme}.",
-                "I decided to make {item} at an arcane enchanter myself, as part of my plan to {scheme}.",
-                "I bound the enchantment and made {item}.",
-                "The enchantment slipped while I was making {item}, and the work was ruined.",
-                "I ran out of time before I could finish enchanting {item}.",
-                "{agent} reported back that the enchantment had slipped and ruined {item}.",
-                "{agent} reported back that they had run out of time before finishing {item}.",
-                "{agent} reported back that they had made {item}.",
-                "make {item} at an arcane enchanter",
-                "make {item} for them at an arcane enchanter",
-            }},
             false,
         },
         Verb{
             "set",
             "Set",
             PlotModel::StepType::Craft,
-            {{Slot{"item", SlotKind::Thing, Rule::SetRecipe, Awareness::Unset, "what is made"}}},
+            {{Slot{"item", SlotKind::Thing, Rule::SetRecipe, Awareness::Unset}}},
             1,
             false,
             true,
-            {{
-                "{agent} makes {item} at a jeweler's bench.",
-                "{mastermind} asked me to make {item} for them, so I set to work at my bench.",
-                "I asked {agent} to make {item} for me, as part of my plan to {scheme}.",
-                "I decided to make {item} myself, as part of my plan to {scheme}.",
-                "I made {item}, and it is fine work.",
-                "My hand slipped, and I spoiled the work on {item}.",
-                "I ran out of time before I could finish {item}.",
-                "{agent} reported back that they had spoiled the work on {item}.",
-                "{agent} reported back that they had run out of time before finishing {item}.",
-                "{agent} reported back that they had made {item}.",
-                "make {item}",
-                "make {item} for them",
-            }},
             false,
         },
         Verb{
             "fletch",
             "Fletch",
             PlotModel::StepType::Craft,
-            {{Slot{"item", SlotKind::Thing, Rule::FletchRecipe, Awareness::Unset, "what is made"}}},
+            {{Slot{"item", SlotKind::Thing, Rule::FletchRecipe, Awareness::Unset}}},
             1,
             false,
             true,
-            {{
-                "{agent} fletches {item}.",
-                "{mastermind} asked me to fletch {item} for them, so I set to work.",
-                "I asked {agent} to fletch {item} for me, as part of my plan to {scheme}.",
-                "I decided to fletch {item} myself, as part of my plan to {scheme}.",
-                "I fletched {item}, true and straight.",
-                "I spoiled the work on {item}.",
-                "I ran out of time before I could finish fletching {item}.",
-                "{agent} reported back that they had spoiled the work on {item}.",
-                "{agent} reported back that they had run out of time before finishing {item}.",
-                "{agent} reported back that they had fletched {item}.",
-                "fletch {item}",
-                "fletch {item} for them",
-            }},
             false,
         },
     }};
@@ -1012,40 +532,12 @@ namespace NarrativeEngine::PlotVerbs
     // prose is otherwise right, so it is mended rather than refused.
     [[nodiscard]] std::string Plain(std::string_view text);
 
-    // A verb's dashboard sentence with every slot unfilled: "Someone steals
-    // something from someone." Says what the verb does without saying to
-    // whom, which is how a verb is offered as a kind of step.
-    [[nodiscard]] std::string Generic(const Verb& verb);
-
-    // What an unfilled slot of each kind reads as.
-    [[nodiscard]] std::string_view Unfilled(SlotKind kind) noexcept;
-
     // The slot of this name in a verb, or nullptr. `agent`, `mastermind` and
     // `scheme` are not slots: every verb has them implicitly.
     [[nodiscard]] const Slot* FindSlot(const Verb& verb, std::string_view name) noexcept;
-
-    // One of a step's templates, filled from what the step holds: `{agent}`
-    // from its actor, `{scheme}` from `scheme` as a verb phrase, and every
-    // other name from its slots. Anything not yet filled reads as Unfilled
-    // of its kind. Empty for a step with no verb.
-    [[nodiscard]] std::string RenderStep(const PlotModel::Step& step, Template t, std::string_view scheme = {});
-
-    // RenderStep for a template that is a phrase rather than a sentence, so
-    // it is not capitalised: "steal a ruby from Hulda", to go mid-sentence.
-    [[nodiscard]] std::string RenderPhrase(const PlotModel::Step& step, Template t);
-
-    // What the person in slot `slot` of a step remembers, filled the same
-    // way. Empty for a step with no verb, a slot it does not have, or a
-    // template that slot does not carry.
-    [[nodiscard]] std::string RenderTarget(const PlotModel::Step& step, std::string_view slot, TargetTemplate t);
 
     // The caption under a step's node: its verb's, the model's own for a
     // prose step that wrote one, or the resolution profile's verb.
     [[nodiscard]] std::string Caption(const PlotModel::Step& step);
 
-    // One of the plot-level lines above, with `{scheme}` as a verb phrase.
-    [[nodiscard]] std::string RenderPlotLine(std::string_view text, std::string_view scheme);
-
-    // The concession memory for a plot whose scheme this is.
-    [[nodiscard]] std::string RenderConceded(std::string_view scheme);
 } // namespace NarrativeEngine::PlotVerbs

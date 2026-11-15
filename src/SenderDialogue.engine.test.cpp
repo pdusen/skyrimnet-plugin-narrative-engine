@@ -1,7 +1,9 @@
 #include <SenderDialogue.h>
 
 #include <ConfiguredSettings.h>
+#include <EventText.h>
 #include <FakeSkyrimNet.h>
+#include <ShippedLanguage.h>
 #include <SkyrimNetAPI.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -72,8 +74,8 @@ namespace
                + target + R"(","dialogue":")" + line + R"("}})";
     }
 
-    // The same exchange in the rendered shape, which is what an array that
-    // has already been through SkyrimNetEvents::FormatEventsText looks like.
+    // The same exchange in the flat shape PublicAPI.h's example row shows,
+    // with the line as a top-level `text`.
     std::string FormattedEventRow(const char* origin, const char* target, const char* line, double gameTime)
     {
         return R"({"type":"dialogue","text":")" + std::string{line} + R"(","gameTime":)" + std::to_string(gameTime)
@@ -471,12 +473,13 @@ TEST_CASE("SenderDialogue::AnnotateAges", "[SenderDialogue][engine]")
 
         SECTION("should render the age")
         {
-            REQUIRE(dialogue[0].value("age_str", "") == "10 minutes ago");
+            REQUIRE(NarrativeEngine::EventText::Ago(NarrativeEngine::Testing::ShippedEnglish(), dialogue[0].at("age"))
+                    == "10 minutes ago");
         }
 
         SECTION("should drop the raw timestamp")
         {
-            // The prompt renders age_str; leaving gameTime on the row spends
+            // The prompt renders the age; leaving gameTime on the row spends
             // prompt budget on a number nothing reads.
             REQUIRE_FALSE(dialogue[0].contains("gameTime"));
         }
@@ -488,7 +491,8 @@ TEST_CASE("SenderDialogue::AnnotateAges", "[SenderDialogue][engine]")
 
         SECTION("should say recent rather than invent an age")
         {
-            REQUIRE(dialogue[0].value("age_str", "") == "recent");
+            REQUIRE(NarrativeEngine::EventText::Ago(NarrativeEngine::Testing::ShippedEnglish(), dialogue[0].at("age"))
+                    == "recent");
         }
     }
 }
