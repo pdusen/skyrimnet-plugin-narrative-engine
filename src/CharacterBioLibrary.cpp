@@ -69,6 +69,21 @@ namespace NarrativeEngine::CharacterBios
             return out;
         }
 
+        // Paths <-> UTF-8 strings. std::filesystem's narrow conversions use the
+        // process ANSI code page (1252 on Western Windows), which cannot hold
+        // Cyrillic, CJK, etc. and throws "No mapping for the Unicode character"
+        // on file names SkyrimNet writes for non-English character names.
+        [[nodiscard]] std::string Utf8(const std::filesystem::path& path)
+        {
+            const auto text = path.generic_u8string();
+            return std::string{text.begin(), text.end()};
+        }
+
+        [[nodiscard]] std::filesystem::path FromUtf8(std::string_view text)
+        {
+            return std::filesystem::path{std::u8string{text.begin(), text.end()}};
+        }
+
         [[nodiscard]] std::string ReadFile(const std::filesystem::path& path)
         {
             std::ifstream in{path, std::ios::binary};
@@ -94,13 +109,13 @@ namespace NarrativeEngine::CharacterBios
             switch (layer.kind) {
             case Resolver::LayerKind::Base:
             case Resolver::LayerKind::Library:
-                return kSkyrimNetRoot / "library" / layer.folder;
+                return kSkyrimNetRoot / "library" / FromUtf8(layer.folder);
             case Resolver::LayerKind::External:
-                return kSkyrimNetRoot / "external" / layer.folder;
+                return kSkyrimNetRoot / "external" / FromUtf8(layer.folder);
             case Resolver::LayerKind::Overlay:
                 return kSkyrimNetRoot / "overlay";
             case Resolver::LayerKind::Save:
-                return kSkyrimNetRoot / "saves" / layer.folder;
+                return kSkyrimNetRoot / "saves" / FromUtf8(layer.folder);
             }
             return {};
         }
@@ -126,7 +141,7 @@ namespace NarrativeEngine::CharacterBios
                  !ec && it != std::filesystem::recursive_directory_iterator{};
                  it.increment(ec)) {
                 if (it->is_regular_file(ec)) {
-                    layer.paths.insert(std::filesystem::relative(it->path(), directory, ec).generic_string());
+                    layer.paths.insert(Utf8(std::filesystem::relative(it->path(), directory, ec)));
                 }
             }
             return layer;
@@ -139,7 +154,7 @@ namespace NarrativeEngine::CharacterBios
             std::error_code ec;
             for (const auto& entry : std::filesystem::directory_iterator{kSkyrimNetRoot / "library", ec}) {
                 if (entry.is_directory(ec)) {
-                    const auto folder = entry.path().filename().string();
+                    const auto folder = Utf8(entry.path().filename());
                     const auto folded = Folded(folder);
                     const auto kind = folded == Resolver::kBaseId || folded == Resolver::kBaseUpdateFolder
                                           ? Resolver::LayerKind::Base
@@ -149,13 +164,13 @@ namespace NarrativeEngine::CharacterBios
             }
             for (const auto& entry : std::filesystem::directory_iterator{kSkyrimNetRoot / "external", ec}) {
                 if (entry.is_directory(ec)) {
-                    layers.push_back(ScanLayer(Resolver::LayerKind::External, entry.path().filename().string()));
+                    layers.push_back(ScanLayer(Resolver::LayerKind::External, Utf8(entry.path().filename())));
                 }
             }
             if (std::filesystem::is_directory(kSkyrimNetRoot / "overlay", ec)) {
                 layers.push_back(ScanLayer(Resolver::LayerKind::Overlay, "overlay"));
             }
-            if (!saveId.empty() && std::filesystem::is_directory(kSkyrimNetRoot / "saves" / saveId, ec)) {
+            if (!saveId.empty() && std::filesystem::is_directory(kSkyrimNetRoot / "saves" / FromUtf8(saveId), ec)) {
                 layers.push_back(ScanLayer(Resolver::LayerKind::Save, saveId));
             }
             return layers;
@@ -188,7 +203,7 @@ namespace NarrativeEngine::CharacterBios
             std::vector<Resolver::CsvFile> files;
             for (const auto& path : paths) {
                 if (const auto* winner = Resolver::Winner(stack, path); winner != nullptr) {
-                    files.push_back({path, ReadFile(LayerDirectory(*winner) / path)});
+                    files.push_back({path, ReadFile(LayerDirectory(*winner) / FromUtf8(path))});
                 }
             }
             return files;
@@ -294,7 +309,7 @@ namespace NarrativeEngine::CharacterBios
             for (const auto& layer : layers) {
                 for (const auto& path : layer.paths) {
                     if (HasPrefix(path, "prompts/translation/generic/") && IsCsv(path)) {
-                        genericFiles.push_back({path, ReadFile(LayerDirectory(layer) / path)});
+                        genericFiles.push_back({path, ReadFile(LayerDirectory(layer) / FromUtf8(path))});
                     }
                 }
             }
@@ -414,7 +429,7 @@ namespace NarrativeEngine::CharacterBios
             ++byTier[resolution.tier];
             held.tiers.emplace(member.npc, resolution.tier);
             if (resolution.layer != nullptr) {
-                const auto text = ReadFile(LayerDirectory(*resolution.layer) / resolution.path);
+                const auto text = ReadFile(LayerDirectory(*resolution.layer) / FromUtf8(resolution.path));
                 templated += HasTemplateLogic(text) ? 1 : 0;
                 held.bios.emplace(member.npc, ParseBio(text));
                 if (resolution.tier == Resolver::Tier::Own) {
@@ -479,7 +494,7 @@ namespace NarrativeEngine::CharacterBios
         if (byTier[Resolver::Tier::None] == facts->members.size() && !facts->members.empty()) {
             logger::warn("CharacterBios: nobody resolved to any profile, not even characters/default. Is SkyrimNet's "
                          "content library at {}?",
-                         kSkyrimNetRoot.string());
+                         Utf8(kSkyrimNetRoot));
         }
         g_held = std::move(held);
     }
